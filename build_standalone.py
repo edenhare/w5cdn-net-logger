@@ -98,7 +98,7 @@ def build_bundle() -> Path:
             encoding="utf-8",
             newline="\n",
         )
-        os.chmod(launcher, 0o755)
+        os.chmod(launcher, 0o755)  # nosec B103
 
     release_dir = ROOT_DIR / "release"
     release_dir.mkdir(parents=True, exist_ok=True)

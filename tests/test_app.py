@@ -724,7 +724,9 @@ def test_window_shutdown_manager_and_unload_endpoint(client: TestClient) -> None
         assert fired["count"] == 1
 
         # Stale callback firing after unregister is ignored
-        old_cb = lambda: fired.__setitem__("count", fired["count"] + 10)
+        def old_cb() -> None:
+            fired["count"] += 10
+
         net_app.register_shutdown_callback(old_cb, grace_seconds=0.05)
         net_app.register_shutdown_callback(None)
         net_app.shutdown_manager._fire(old_cb)

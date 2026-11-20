@@ -45,7 +45,75 @@ def _resolve_dirs() -> tuple[Path, Path]:
 BASE_DIR, BUNDLE_DIR = _resolve_dirs()
 STATIC_DIR = BUNDLE_DIR / "static"
 
+CTRL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,120}$")
+URL_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):")
+NUMERIC_NEG_RE = re.compile(r"^-\d+(\.\d+)?$")
+MAX_BACKUP_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_BACKUP_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+MAX_BACKUP_FILES = 5000
+
 logger = logging.getLogger("net_logger")
+
+
+def _clean_single_line(raw: Any, max_len: int = 200) -> str:
+    """Strip ASCII control characters (including CR/LF/NUL) to prevent header/Telnet injection."""
+    return CTRL_CHARS_RE.sub("", str(raw or "")).strip()[:max_len]
+
+
+HOST_PORT_RE = re.compile(r"^(?:localhost|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+):\d{1,5}(?:/.*)?$", re.IGNORECASE)
+
+
+def _sanitize_http_url(raw: Any, *, default_scheme: str = "https", max_len: int = 240) -> str:
+    """Allow only http:// or https:// URLs; reject javascript:, data:, file:, etc."""
+    cleaned = _clean_single_line(raw, max_len=max_len)
+    if not cleaned or any(ch.isspace() for ch in cleaned):
+        return ""
+    if HOST_PORT_RE.match(cleaned):
+        return f"{default_scheme}://{cleaned}"[:max_len]
+    m = URL_SCHEME_RE.match(cleaned)
+    if m:
+        scheme = m.group(1).lower()
+        if scheme not in {"http", "https"}:
+            return ""
+        return cleaned[:max_len]
+    return f"{default_scheme}://{cleaned}"[:max_len]
+
+
+def _sanitize_host(raw: Any, default: str = "127.0.0.1") -> str:
+    raw_str = str(raw or "").strip()
+    if not raw_str or CTRL_CHARS_RE.search(raw_str) or not HOSTNAME_RE.match(raw_str):
+        return default
+    return raw_str[:120]
+
+
+def _sanitize_folder_path(raw: Any, max_len: int = 400) -> str:
+    cleaned = _clean_single_line(raw, max_len=max_len)
+    if not cleaned:
+        return ""
+    parts = re.split(r"[\\/]+", cleaned)
+    if ".." in parts:
+        return ""
+    return cleaned
+
+
+def _csv_safe_cell(val: Any) -> str:
+    """Neutralize spreadsheet formula injection (CSV/Excel/Calc) while keeping negative numbers intact."""
+    s = str(val if val is not None else "")
+    if not s:
+        return ""
+    first = s[0]
+    if first in {"=", "+", "@", "\t", "\r"} or (first == "-" and not NUMERIC_NEG_RE.match(s)):
+        return f"'{s}"
+    return s
+
+
+def _parse_xml_safely(xml_text: str) -> ET.Element:
+    """Parse XML while rejecting DOCTYPE/ENTITY declarations (XXE & entity-expansion defense)."""
+    head = xml_text[:4096].upper()
+    if "<!DOCTYPE" in head or "<!ENTITY" in head:
+        raise ET.ParseError("XML DOCTYPE/ENTITY declarations are not permitted")
+    return ET.fromstring(xml_text)  # nosec B314
 
 
 def load_dotenv(path: Path) -> None:
@@ -339,18 +407,16 @@ def _sanitize_nws_contact(raw: Any) -> dict[str, str]:
     elif isinstance(raw, dict):
         data = raw
 
-    chat_url = str(data.get("nwschat_url", "")).strip()[:300]
-    if chat_url and not re.match(r"^https?://", chat_url, re.IGNORECASE):
-        chat_url = f"https://{chat_url}"
+    chat_url = _sanitize_http_url(data.get("nwschat_url", ""), default_scheme="https", max_len=300)
 
     return {
-        "wfo_name": str(data.get("wfo_name", "")).strip()[:120],
-        "phone": str(data.get("phone", "")).strip()[:80],
-        "email": str(data.get("email", "")).strip()[:160],
+        "wfo_name": _clean_single_line(data.get("wfo_name", ""), 120),
+        "phone": _clean_single_line(data.get("phone", ""), 80),
+        "email": _clean_single_line(data.get("email", ""), 160),
         "nwschat_url": chat_url,
-        "radio_liaison": str(data.get("radio_liaison", "")).strip()[:160],
-        "winlink_address": str(data.get("winlink_address", "")).strip()[:120],
-        "reporting_notes": str(data.get("reporting_notes", "")).strip()[:1500],
+        "radio_liaison": _clean_single_line(data.get("radio_liaison", ""), 160),
+        "winlink_address": _clean_single_line(data.get("winlink_address", ""), 120),
+        "reporting_notes": str(data.get("reporting_notes", "")).replace("\x00", "").strip()[:1500],
     }
 
 
@@ -464,7 +530,7 @@ def _sanitize_digital_routing(raw: Any) -> dict[str, Any]:
     if tnc_proto not in VALID_TNC_PROTOCOLS:
         tnc_proto = str(DEFAULT_DIGITAL_ROUTING["tnc_protocol"])
 
-    tnc_host = str(data.get("tnc_host", DEFAULT_DIGITAL_ROUTING["tnc_host"])).strip()[:120] or "127.0.0.1"
+    tnc_host = _sanitize_host(data.get("tnc_host", DEFAULT_DIGITAL_ROUTING["tnc_host"]))
     raw_port = data.get("tnc_port", DEFAULT_DIGITAL_ROUTING["tnc_port"])
     try:
         tnc_port = int(str(raw_port).strip())
@@ -473,64 +539,56 @@ def _sanitize_digital_routing(raw: Any) -> dict[str, Any]:
     if not (1 <= tnc_port <= 65535):
         tnc_port = 8080
 
-    pat_url = str(data.get("pat_url", DEFAULT_DIGITAL_ROUTING["pat_url"])).strip()[:240]
-    if pat_url and not re.match(r"^https?://", pat_url, re.IGNORECASE):
-        pat_url = f"http://{pat_url}"
+    pat_url = _sanitize_http_url(data.get("pat_url", DEFAULT_DIGITAL_ROUTING["pat_url"]), default_scheme="http", max_len=240)
+    remote_url = _sanitize_http_url(data.get("remote_access_url", ""), default_scheme="http", max_len=240)
+    webmail_url = _sanitize_http_url(data.get("bpq_webmail_url", ""), default_scheme="http", max_len=240)
 
-    remote_url = str(data.get("remote_access_url", "")).strip()[:240]
-    if remote_url and not re.match(r"^https?://", remote_url, re.IGNORECASE):
-        remote_url = f"http://{remote_url}"
-
-    webmail_url = str(data.get("bpq_webmail_url", "")).strip()[:240]
-    if webmail_url and not re.match(r"^https?://", webmail_url, re.IGNORECASE):
-        webmail_url = f"http://{webmail_url}"
-
-    bpq_bbs_cmd = str(data.get("bpq_bbs_cmd", DEFAULT_DIGITAL_ROUTING["bpq_bbs_cmd"])).strip().upper()[:40]
-    bpq_nts_msg_type = str(
-        data.get("bpq_nts_msg_type", DEFAULT_DIGITAL_ROUTING["bpq_nts_msg_type"])
-    ).strip().upper()
+    bpq_bbs_cmd = _clean_single_line(data.get("bpq_bbs_cmd", DEFAULT_DIGITAL_ROUTING["bpq_bbs_cmd"]), 40).upper()
+    bpq_nts_msg_type = _clean_single_line(
+        data.get("bpq_nts_msg_type", DEFAULT_DIGITAL_ROUTING["bpq_nts_msg_type"]), 8
+    ).upper()
     if bpq_nts_msg_type not in VALID_BPQ_MSG_TYPES:
         bpq_nts_msg_type = "SP"
-    bpq_wl_prefix = str(
-        data.get("bpq_winlink_prefix", DEFAULT_DIGITAL_ROUTING["bpq_winlink_prefix"])
-    ).strip().upper()[:24]
+    bpq_wl_prefix = _clean_single_line(
+        data.get("bpq_winlink_prefix", DEFAULT_DIGITAL_ROUTING["bpq_winlink_prefix"]), 24
+    ).upper()
 
     return {
         "winlink_enabled": bool(data.get("winlink_enabled", DEFAULT_DIGITAL_ROUTING["winlink_enabled"])),
         "packet_enabled": bool(data.get("packet_enabled", DEFAULT_DIGITAL_ROUTING["packet_enabled"])),
         "station_mode": station_mode,
-        "remote_system_name": str(data.get("remote_system_name", "")).strip()[:120],
-        "remote_contact_method": str(data.get("remote_contact_method", "")).strip()[:80],
-        "remote_operator_call": str(data.get("remote_operator_call", "")).strip().upper()[:24],
-        "remote_contact_info": str(data.get("remote_contact_info", "")).strip()[:240],
+        "remote_system_name": _clean_single_line(data.get("remote_system_name", ""), 120),
+        "remote_contact_method": _clean_single_line(data.get("remote_contact_method", ""), 80),
+        "remote_operator_call": _clean_single_line(data.get("remote_operator_call", ""), 24).upper(),
+        "remote_contact_info": _clean_single_line(data.get("remote_contact_info", ""), 240),
         "remote_access_url": remote_url,
         "transport": transport,
-        "bpq_user": str(data.get("bpq_user", "")).strip()[:40],
+        "bpq_user": _clean_single_line(data.get("bpq_user", ""), 40),
         "bpq_bbs_cmd": bpq_bbs_cmd,
         "bpq_nts_msg_type": bpq_nts_msg_type,
         "bpq_winlink_prefix": bpq_wl_prefix,
         "bpq_webmail_url": webmail_url,
-        "winlink_callsign": str(data.get("winlink_callsign", "")).strip().upper()[:24],
+        "winlink_callsign": _clean_single_line(data.get("winlink_callsign", ""), 24).upper(),
         "winlink_mode": wl_mode,
-        "winlink_frequency": str(data.get("winlink_frequency", "")).strip()[:40],
-        "winlink_digipeater": str(data.get("winlink_digipeater", "")).strip().upper()[:60],
-        "winlink_to_default": str(data.get("winlink_to_default", "")).strip()[:120],
-        "packet_bbs_call": str(data.get("packet_bbs_call", "")).strip().upper()[:24],
-        "packet_frequency": str(data.get("packet_frequency", "")).strip()[:40],
-        "packet_digipeater": str(data.get("packet_digipeater", "")).strip().upper()[:60],
+        "winlink_frequency": _clean_single_line(data.get("winlink_frequency", ""), 40),
+        "winlink_digipeater": _clean_single_line(data.get("winlink_digipeater", ""), 60).upper(),
+        "winlink_to_default": _clean_single_line(data.get("winlink_to_default", ""), 120),
+        "packet_bbs_call": _clean_single_line(data.get("packet_bbs_call", ""), 24).upper(),
+        "packet_frequency": _clean_single_line(data.get("packet_frequency", ""), 40),
+        "packet_digipeater": _clean_single_line(data.get("packet_digipeater", ""), 60).upper(),
         "tnc_protocol": tnc_proto,
         "tnc_host": tnc_host,
         "tnc_port": tnc_port,
-        "serial_port": str(data.get("serial_port", "")).strip()[:80],
+        "serial_port": _clean_single_line(data.get("serial_port", ""), 80),
         "pat_url": pat_url,
-        "outbox_dir": str(data.get("outbox_dir", "")).strip()[:400],
-        "routing_notes": str(data.get("routing_notes", "")).strip()[:1000],
+        "outbox_dir": _sanitize_folder_path(data.get("outbox_dir", ""), 400),
+        "routing_notes": str(data.get("routing_notes", "")).replace("\x00", "").strip()[:1000],
     }
 
 
 def get_digital_outbox_dir(routing: dict[str, Any] | None = None) -> Path:
     cfg = routing if routing is not None else _sanitize_digital_routing(get_stored_settings().get("digital_routing"))
-    configured = str(cfg.get("outbox_dir") or "").strip()
+    configured = _sanitize_folder_path(cfg.get("outbox_dir") or "")
     if configured:
         if sys.platform != "win32" and WINDOWS_ABS_PATH_RE.match(configured):
             logger.warning(
@@ -645,7 +703,7 @@ WINDOWS_ABS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]|^\\\\")
 
 def get_radiograms_dir() -> Path:
     stored = get_stored_settings().get("radiograms_dir", "").strip()
-    configured = stored or os.environ.get("RADIOGRAMS_DIR", "").strip()
+    configured = _sanitize_folder_path(stored or os.environ.get("RADIOGRAMS_DIR", "").strip())
     if configured:
         if sys.platform != "win32" and WINDOWS_ABS_PATH_RE.match(configured):
             logger.warning(
@@ -1008,6 +1066,12 @@ def init_db(db_path: Path | None = None) -> None:
                     """,
                     (item["name"], item["category"], item["body"], item["is_default"], now),
                 )
+    if os.name == "posix":
+        target = db_path or get_db_path()
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -1035,22 +1099,29 @@ class NetCreate(BaseModel):
     band: str = Field(default="", max_length=20)
     mode: str = Field(default="FM", max_length=20)
     tone_offset: str = Field(default="", max_length=60)
-    ncs_call: str = Field(default_factory=get_operator_call)
+    ncs_call: str = Field(default_factory=get_operator_call, max_length=24)
     notes: str = Field(default="", max_length=4000)
 
     @field_validator("name")
     @classmethod
     def strip_name(cls, v: str) -> str:
-        v = v.strip()
+        v = _clean_single_line(v, 160)
         if not v:
             raise ValueError("Net name is required")
         return v
 
+    @field_validator("net_type", "frequency", "band", "mode", "tone_offset")
+    @classmethod
+    def clean_single_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 60)
+
     @field_validator("ncs_call")
     @classmethod
     def clean_ncs(cls, v: str) -> str:
-        v = v.strip().upper()
-        return v or get_operator_call()
+        cleaned = _clean_single_line(v, 24).upper()
+        if not cleaned:
+            return get_operator_call()
+        return normalize_callsign(cleaned)
 
 
 class NetUpdate(BaseModel):
@@ -1062,6 +1133,31 @@ class NetUpdate(BaseModel):
     tone_offset: str | None = Field(default=None, max_length=60)
     ncs_call: str | None = Field(default=None, max_length=24)
     notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = _clean_single_line(v, 160)
+        if not cleaned:
+            raise ValueError("Net name is required")
+        return cleaned
+
+    @field_validator("net_type", "frequency", "band", "mode", "tone_offset")
+    @classmethod
+    def clean_single_fields(cls, v: str | None) -> str | None:
+        return _clean_single_line(v, 60) if v is not None else None
+
+    @field_validator("ncs_call")
+    @classmethod
+    def clean_ncs(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = _clean_single_line(v, 24).upper()
+        if not cleaned:
+            return ""
+        return normalize_callsign(cleaned)
 
 
 class NetHandoff(BaseModel):
@@ -1112,12 +1208,17 @@ class CheckinCreate(BaseModel):
     @field_validator("grid")
     @classmethod
     def clean_grid(cls, v: str) -> str:
-        return v.strip().upper()
+        return _clean_single_line(v, 12).upper()
 
     @field_validator("state")
     @classmethod
     def clean_state(cls, v: str) -> str:
-        return v.strip().upper()
+        return _clean_single_line(v, 40).upper()
+
+    @field_validator("name", "qth", "county", "spotter_id", "races_id", "signal_report")
+    @classmethod
+    def clean_checkin_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 160)
 
 
 class CheckinUpdate(BaseModel):
@@ -1141,6 +1242,11 @@ class CheckinUpdate(BaseModel):
     def validate_call(cls, v: str | None) -> str | None:
         return normalize_callsign(v) if v is not None else None
 
+    @field_validator("name", "qth", "grid", "county", "state", "spotter_id", "races_id", "signal_report")
+    @classmethod
+    def clean_checkin_update_fields(cls, v: str | None) -> str | None:
+        return _clean_single_line(v, 160) if v is not None else None
+
 
 class OperatorUpsert(BaseModel):
     name: str = Field(default="", max_length=120)
@@ -1155,6 +1261,23 @@ class OperatorUpsert(BaseModel):
     spotter_id: str = Field(default="", max_length=40)
     races_id: str = Field(default="", max_length=40)
     notes: str = Field(default="", max_length=1000)
+
+    @field_validator(
+        "name",
+        "preferred_name",
+        "qth",
+        "city",
+        "state",
+        "county",
+        "grid",
+        "country",
+        "license_class",
+        "spotter_id",
+        "races_id",
+    )
+    @classmethod
+    def clean_operator_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 160)
 
 
 class PreferencesUpdate(BaseModel):
@@ -1201,6 +1324,32 @@ class PreferencesUpdate(BaseModel):
         if not re.match(r"^[A-Z]{2}$", cleaned):
             raise ValueError("NWS state must be a 2-letter US state code (e.g. TX)")
         return cleaned
+
+    @field_validator("radiograms_dir")
+    @classmethod
+    def validate_radiograms_dir(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        raw = v.strip()
+        if not raw:
+            return ""
+        if CTRL_CHARS_RE.search(raw) or ".." in re.split(r"[\\/]+", raw):
+            raise ValueError("Radiograms folder path cannot contain control characters or '..'")
+        return raw[:400]
+
+    @field_validator("qrz_pass", "bpq_pass")
+    @classmethod
+    def validate_passwords(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if any(ch in v for ch in ("\x00", "\r", "\n")):
+            raise ValueError("Password cannot contain newline or NUL characters")
+        return v
+
+    @field_validator("qrz_user")
+    @classmethod
+    def clean_qrz_user(cls, v: str | None) -> str | None:
+        return _clean_single_line(v, 120) if v is not None else None
 
 
 class ScriptCreate(BaseModel):
@@ -1275,12 +1424,30 @@ class RadiogramCreate(BaseModel):
     @field_validator("station_of_origin", "received_from", "sent_to")
     @classmethod
     def upper_station(cls, v: str) -> str:
-        return v.strip().upper()
+        return _clean_single_line(v, 24).upper()
 
     @field_validator("hx")
     @classmethod
     def upper_hx(cls, v: str) -> str:
-        return normalize_arrl_hx(v)
+        return normalize_arrl_hx(_clean_single_line(v, 20))
+
+    @field_validator(
+        "msg_number",
+        "place_of_origin",
+        "time_filed",
+        "date_filed",
+        "to_name",
+        "to_address",
+        "to_city_state_zip",
+        "to_phone",
+        "to_email",
+        "signature",
+        "received_at",
+        "sent_at",
+    )
+    @classmethod
+    def clean_rg_single_line(cls, v: str) -> str:
+        return _clean_single_line(v, 200)
 
 
 class RadiogramUpdate(BaseModel):
@@ -1305,6 +1472,27 @@ class RadiogramUpdate(BaseModel):
     sent_to: str | None = Field(default=None, max_length=24)
     sent_at: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator(
+        "msg_number",
+        "station_of_origin",
+        "place_of_origin",
+        "time_filed",
+        "date_filed",
+        "to_name",
+        "to_address",
+        "to_city_state_zip",
+        "to_phone",
+        "to_email",
+        "signature",
+        "received_from",
+        "received_at",
+        "sent_to",
+        "sent_at",
+    )
+    @classmethod
+    def clean_rg_upd_single_line(cls, v: str | None) -> str | None:
+        return _clean_single_line(v, 200) if v is not None else None
 
 
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -1416,7 +1604,7 @@ class CallsignLookupService:
                     },
                 )
                 resp.raise_for_status()
-                root = ET.fromstring(resp.text)
+                root = _parse_xml_safely(resp.text)
                 session_map = self._xml_child_map(self._find_section(root, "Session"))
                 key = session_map.get("Key")
                 if key:
@@ -1445,7 +1633,7 @@ class CallsignLookupService:
                 },
             )
             resp.raise_for_status()
-            root = ET.fromstring(resp.text)
+            root = _parse_xml_safely(resp.text)
         except (httpx.HTTPError, ET.ParseError, OSError) as exc:
             logger.warning("QRZ connection test failed: %s", exc)
             return {"ok": False, "message": f"Connection failed: {exc}"}
@@ -1479,7 +1667,7 @@ class CallsignLookupService:
                     params={"s": key, "callsign": callsign},
                 )
                 resp.raise_for_status()
-                root = ET.fromstring(resp.text)
+                root = _parse_xml_safely(resp.text)
             except (httpx.HTTPError, ET.ParseError, OSError) as exc:
                 logger.warning("QRZ lookup failed for %s: %s", callsign, exc)
                 return None
@@ -2319,24 +2507,24 @@ def build_csv_export(net: dict[str, Any], checkins: list[dict[str, Any]]) -> str
         writer.writerow(
             [
                 idx,
-                c["callsign"],
-                c["name"],
-                c["qth"],
-                c["grid"],
-                c["county"],
-                c["state"],
-                c.get("spotter_id", ""),
-                c.get("races_id", ""),
-                c["status"],
+                _csv_safe_cell(c["callsign"]),
+                _csv_safe_cell(c["name"]),
+                _csv_safe_cell(c["qth"]),
+                _csv_safe_cell(c["grid"]),
+                _csv_safe_cell(c["county"]),
+                _csv_safe_cell(c["state"]),
+                _csv_safe_cell(c.get("spotter_id", "")),
+                _csv_safe_cell(c.get("races_id", "")),
+                _csv_safe_cell(c["status"]),
                 "YES" if c["has_traffic"] else "NO",
-                c["signal_report"],
-                c["comments"],
-                c["checked_in_at"],
-                c["checked_out_at"] or "",
-                net["name"],
-                net["frequency"],
-                net["mode"],
-                net["ncs_call"],
+                _csv_safe_cell(c["signal_report"]),
+                _csv_safe_cell(c["comments"]),
+                _csv_safe_cell(c["checked_in_at"]),
+                _csv_safe_cell(c["checked_out_at"] or ""),
+                _csv_safe_cell(net["name"]),
+                _csv_safe_cell(net["frequency"]),
+                _csv_safe_cell(net["mode"]),
+                _csv_safe_cell(net["ncs_call"]),
             ]
         )
     return buf.getvalue()
@@ -2934,6 +3122,58 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+LOCAL_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\]|testserver)(:\d{1,5})?$", re.IGNORECASE)
+
+
+def _allowed_hosts() -> set[str]:
+    hosts = {"127.0.0.1", "localhost", "::1", "testserver"}
+    configured = (os.environ.get("HOST") or "").strip().lower()
+    if configured and configured not in {"0.0.0.0", "::"}:  # nosec B104
+        hosts.add(configured.strip("[]"))
+    return hosts
+
+
+def _extract_hostname(host_header: str) -> str:
+    h = host_header.strip().lower()
+    if h.startswith("["):
+        end = h.find("]")
+        return h[1:end] if end != -1 else h
+    return h.split(":", 1)[0]
+
+
+def _is_allowed_origin(origin: str) -> bool:
+    cleaned = origin.strip()
+    if not cleaned or cleaned.lower() == "null":
+        return False
+    if LOCAL_ORIGIN_RE.match(cleaned):
+        return True
+    configured = (os.environ.get("HOST") or "").strip().lower().strip("[]")
+    if configured and configured not in {"0.0.0.0", "::"}:  # nosec B104
+        escaped = re.escape(configured)
+        if re.match(rf"^https?://{escaped}(:\d{{1,5}})?$", cleaned, re.IGNORECASE):
+            return True
+    return False
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next: Any) -> Response:
+    """Defend localhost server against DNS rebinding, cross-site CSRF, and MIME/clickjacking."""
+    host_hdr = request.headers.get("host", "")
+    if host_hdr and _extract_hostname(host_hdr) not in _allowed_hosts():
+        return JSONResponse(status_code=403, content={"detail": "Forbidden Host header"})
+
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        if origin is not None and not _is_allowed_origin(origin):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden cross-origin request"})
+
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    return response
+
 
 @app.exception_handler(sqlite3.Error)
 async def sqlite_error_handler(_request: Request, exc: sqlite3.Error) -> JSONResponse:
@@ -3410,21 +3650,23 @@ async def _bpq_telnet_send_message(
     """Connect to LinBPQ via Telnet, log in, enter BBS if needed, and send an SP message ending with /EX."""
     transcript_parts: list[str] = []
     writer: asyncio.StreamWriter | None = None
+    clean_bbs_cmd = _clean_single_line(bbs_cmd, 40)
+    clean_sp_cmd = _clean_single_line(sp_cmd, 140)
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
         already_in_bbs = await _bpq_telnet_login(
             reader,
             writer,
-            username=username,
-            password=password,
+            username=_clean_single_line(username, 40),
+            password=_clean_single_line(password, 200),
             transcript_parts=transcript_parts,
             timeout=timeout,
         )
 
-        if bbs_cmd and not already_in_bbs:
-            writer.write(f"{bbs_cmd}\r\n".encode("utf-8"))
+        if clean_bbs_cmd and not already_in_bbs:
+            writer.write(f"{clean_bbs_cmd}\r\n".encode("utf-8"))
             await writer.drain()
-            transcript_parts.append(f">>> {bbs_cmd}\n")
+            transcript_parts.append(f">>> {clean_bbs_cmd}\n")
             bbs_resp = await _bpq_read_until(
                 reader,
                 (">", "[bpq-", "password:", "callsign:", "invalid", "error", "sorry"),
@@ -3436,11 +3678,11 @@ async def _bpq_telnet_send_message(
             if any(rep in low_b for rep in BPQ_AUTH_REPROMPT_MARKERS) or any(
                 bad in low_b for bad in ("invalid", "error", "sorry")
             ):
-                raise ValueError(f"Could not enter BBS '{bbs_cmd}': {bbs_resp.strip()}")
+                raise ValueError(f"Could not enter BBS '{clean_bbs_cmd}': {bbs_resp.strip()}")
 
-        writer.write(f"{sp_cmd}\r\n".encode("utf-8"))
+        writer.write(f"{clean_sp_cmd}\r\n".encode("utf-8"))
         await writer.drain()
-        transcript_parts.append(f">>> {sp_cmd}\n")
+        transcript_parts.append(f">>> {clean_sp_cmd}\n")
         subj_prompt = await _bpq_read_until(
             reader, ("title", "subject", ":", "invalid", "not found", "error"), timeout=timeout
         )
@@ -3448,9 +3690,9 @@ async def _bpq_telnet_send_message(
             transcript_parts.append(subj_prompt)
         low_sp = subj_prompt.lower()
         if any(bad in low_sp for bad in ("invalid", "not found", "cannot", "rejected")):
-            raise ValueError(f"BBS rejected recipient command '{sp_cmd}': {subj_prompt.strip()}")
+            raise ValueError(f"BBS rejected recipient command '{clean_sp_cmd}': {subj_prompt.strip()}")
 
-        clean_subj = subject.replace("\r", " ").replace("\n", " ").strip()[:80] or "RADIOGRAM"
+        clean_subj = _clean_single_line(subject, 80) or "RADIOGRAM"
         writer.write(f"{clean_subj}\r\n".encode("utf-8"))
         await writer.drain()
         transcript_parts.append(f">>> {clean_subj}\n")
@@ -3460,11 +3702,16 @@ async def _bpq_telnet_send_message(
         if body_prompt:
             transcript_parts.append(body_prompt)
 
-        norm_lines = [
-            ln for ln in body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        raw_lines = [
+            ln.replace("\x00", "").replace("\x1a", "")
+            for ln in body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
         ]
-        while norm_lines and norm_lines[-1].strip().upper() == "/EX":
-            norm_lines.pop()
+        while raw_lines and raw_lines[-1].strip().upper() == "/EX":
+            raw_lines.pop()
+        norm_lines = [
+            f" {ln}" if ln.strip().upper() == "/EX" else ln
+            for ln in raw_lines
+        ]
         payload_text = "\r\n".join(norm_lines).rstrip("\r\n") + "\r\n/EX\r\n"
         writer.write(payload_text.encode("utf-8"))
         await writer.drain()
@@ -3951,7 +4198,7 @@ async def update_net(net_id: int, payload: NetUpdate) -> dict[str, Any]:
     params = list(clean_updates.values()) + [net_id]
 
     with get_db() as conn:
-        cur = conn.execute(f"UPDATE nets SET {set_clause} WHERE id = ?", params)
+        cur = conn.execute(f"UPDATE nets SET {set_clause} WHERE id = ?", params)  # nosec B608
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Net not found")
     return await get_net(net_id)
@@ -4234,7 +4481,7 @@ async def update_checkin(checkin_id: int, payload: CheckinUpdate) -> dict[str, A
         clean["updated_at"] = now
         set_clause = ", ".join(f"{col} = ?" for col in clean)
         params = list(clean.values()) + [checkin_id]
-        conn.execute(f"UPDATE checkins SET {set_clause} WHERE id = ?", params)
+        conn.execute(f"UPDATE checkins SET {set_clause} WHERE id = ?", params)  # nosec B608
         if "spotter_id" in clean:
             conn.execute(
                 "UPDATE operators SET spotter_id = ? WHERE callsign = ?",
@@ -4343,21 +4590,21 @@ async def export_operators_csv() -> Response:
     for r in rows:
         writer.writerow(
             [
-                r["callsign"],
-                r["name"],
-                r["preferred_name"],
-                r["qth"],
-                r["city"],
-                r["state"],
-                r["county"],
-                r["grid"],
-                r["country"],
-                r["license_class"],
-                r["spotter_id"],
-                r["races_id"],
-                r["notes"],
+                _csv_safe_cell(r["callsign"]),
+                _csv_safe_cell(r["name"]),
+                _csv_safe_cell(r["preferred_name"]),
+                _csv_safe_cell(r["qth"]),
+                _csv_safe_cell(r["city"]),
+                _csv_safe_cell(r["state"]),
+                _csv_safe_cell(r["county"]),
+                _csv_safe_cell(r["grid"]),
+                _csv_safe_cell(r["country"]),
+                _csv_safe_cell(r["license_class"]),
+                _csv_safe_cell(r["spotter_id"]),
+                _csv_safe_cell(r["races_id"]),
+                _csv_safe_cell(r["notes"]),
                 r["checkin_count"],
-                r["last_seen_at"] or "",
+                _csv_safe_cell(r["last_seen_at"] or ""),
             ]
         )
     return Response(
@@ -4637,7 +4884,7 @@ async def update_script(script_id: int, payload: ScriptUpdate) -> dict[str, Any]
             clean["updated_at"] = now
             set_clause = ", ".join(f"{col} = ?" for col in clean)
             params = list(clean.values()) + [script_id]
-            conn.execute(f"UPDATE scripts SET {set_clause} WHERE id = ?", params)
+            conn.execute(f"UPDATE scripts SET {set_clause} WHERE id = ?", params)  # nosec B608
 
         row = conn.execute("SELECT * FROM scripts WHERE id = ?", (script_id,)).fetchone()
         if row and row["is_default"]:
@@ -4827,7 +5074,7 @@ async def list_radiograms(
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT * FROM radiograms {where} ORDER BY id DESC",
+            f"SELECT * FROM radiograms {where} ORDER BY id DESC",  # nosec B608
             params,
         ).fetchall()
     return [row_to_dict(r) for r in rows if r is not None]
@@ -5187,7 +5434,7 @@ async def update_radiogram(rg_id: int, payload: RadiogramUpdate) -> dict[str, An
         clean["updated_at"] = now
         set_clause = ", ".join(f"{col} = ?" for col in clean)
         params = list(clean.values()) + [rg_id]
-        conn.execute(f"UPDATE radiograms SET {set_clause} WHERE id = ?", params)
+        conn.execute(f"UPDATE radiograms SET {set_clause} WHERE id = ?", params)  # nosec B608
         row = conn.execute("SELECT * FROM radiograms WHERE id = ?", (rg_id,)).fetchone()
         rg_dict = row_to_dict(row) or {}
         saved_path = _write_radiogram_file(rg_dict, previous_path=existing["file_path"])
@@ -5223,6 +5470,11 @@ class DigitalStageRequest(BaseModel):
     subject: str = Field(default="", max_length=120)
     bbs_type: Literal["", "SP", "ST"] = ""
 
+    @field_validator("to_address", "subject")
+    @classmethod
+    def clean_stage_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 120)
+
 
 class BpqTelnetSendRequest(BaseModel):
     mode: Literal["winlink", "packet"] = "winlink"
@@ -5230,6 +5482,11 @@ class BpqTelnetSendRequest(BaseModel):
     subject: str = Field(default="", max_length=120)
     bbs_type: Literal["", "SP", "ST"] = ""
     mark_sent: bool = True
+
+    @field_validator("to_address", "subject")
+    @classmethod
+    def clean_bpq_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 120)
 
 
 class DigitalPushRequest(BaseModel):
@@ -5239,12 +5496,22 @@ class DigitalPushRequest(BaseModel):
     bbs_type: Literal["", "SP", "ST"] = ""
     mark_sent: bool = True
 
+    @field_validator("to_address", "subject")
+    @classmethod
+    def clean_push_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 120)
+
 
 class NetReportPushRequest(BaseModel):
     mode: Literal["winlink", "packet"] = "winlink"
     to_address: str = Field(default="", max_length=120)
     subject: str = Field(default="", max_length=120)
     body: str = Field(default="", max_length=50000)
+
+    @field_validator("to_address", "subject")
+    @classmethod
+    def clean_report_fields(cls, v: str) -> str:
+        return _clean_single_line(v, 120)
 
 
 def _resolve_bpq_bbs_type(bbs_type: str, routing: dict[str, Any]) -> str:
@@ -5936,11 +6203,11 @@ async def export_net_radiograms(net_id: int) -> PlainTextResponse:
 @app.get("/api/nets/{net_id}/export/ics214")
 async def export_net_ics214(
     net_id: int,
-    fmt: str = Query(default="text", alias="format"),
+    fmt: Literal["text", "html"] = Query(default="text", alias="format"),
 ) -> Response:
     net, checkins = _load_net_and_checkins(net_id)
     date_part = net["started_at"][:10]
-    if fmt.strip().lower() == "html":
+    if fmt == "html":
         html_doc = build_ics214_html(net, checkins)
         return HTMLResponse(content=html_doc)
     content = build_ics214_text(net, checkins)
@@ -6006,13 +6273,43 @@ async def restore_backup_archive(request: Request) -> dict[str, Any]:
     raw_bytes = await request.body()
     if not raw_bytes:
         raise HTTPException(status_code=400, detail="Empty backup file uploaded")
+    if len(raw_bytes) > MAX_BACKUP_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Backup archive exceeds maximum allowed size ({MAX_BACKUP_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
 
     required_tables = {"nets", "checkins", "radiograms", "operators", "settings"}
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             with zipfile.ZipFile(io.BytesIO(raw_bytes), "r") as zf:
-                names = set(zf.namelist())
+                infos = zf.infolist()
+                if len(infos) > MAX_BACKUP_FILES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Backup archive contains too many files",
+                    )
+                total_uncompressed = 0
+                for info in infos:
+                    member_name = info.filename
+                    if (
+                        member_name.startswith(("/", "\\"))
+                        or ".." in re.split(r"[\\/]+", member_name)
+                        or WINDOWS_ABS_PATH_RE.match(member_name)
+                    ):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Backup archive contains an unsafe file path",
+                        )
+                    total_uncompressed += max(0, info.file_size)
+                    if total_uncompressed > MAX_BACKUP_UNCOMPRESSED_BYTES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Backup archive exceeds maximum uncompressed size limit",
+                        )
+
+                names = {info.filename for info in infos}
                 if "net_logger.db" not in names:
                     raise HTTPException(
                         status_code=400,
@@ -6024,6 +6321,12 @@ async def restore_backup_archive(request: Request) -> dict[str, Any]:
                 # Validate SQLite integrity & required schema before touching live DB
                 check_conn = sqlite3.connect(str(staged_db))
                 try:
+                    integrity = check_conn.execute("PRAGMA integrity_check").fetchone()
+                    if not integrity or str(integrity[0]).lower() != "ok":
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Backup database failed SQLite integrity check",
+                        )
                     tables = {
                         r[0]
                         for r in check_conn.execute(

@@ -40,25 +40,57 @@ jobs:
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --group dev
 
-      - name: Syntax check packaging script
+      - name: Syntax check Python modules
         run: uv run --python ${{ matrix.python-version }} python -m py_compile app.py desktop.py build_standalone.py
 
-      - name: Run full test suite, UI audit, code quality & coverage gate (>=90%)
+      - name: Run full pytest suite (API, security, UI integrity, code quality & >=90% coverage)
         run: uv run --python ${{ matrix.python-version }} pytest -v
+
+  security:
+    name: Security & Static Analysis (Ruff, Bandit, pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install runtime dependencies
+        run: uv sync --python 3.12
+
+      - name: Lint & bug-check with Ruff
+        run: uvx ruff check app.py desktop.py build_standalone.py tests
+
+      - name: Static security scan with Bandit (Medium/High severity)
+        run: uvx bandit -r app.py desktop.py build_standalone.py -ll
+
+      - name: Dependency vulnerability audit (pip-audit)
+        run: uv run --python 3.12 --with pip-audit pip-audit --strict --skip-editable
 
   all-checks-passed:
     name: Required PR Merge Gate
-    needs: [test]
+    needs: [test, security]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Verify all test matrix jobs succeeded
+      - name: Verify all test and security jobs succeeded
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
             echo "Test matrix failed (${{ needs.test.result }}). Blocking merge."
             exit 1
           fi
-          echo "All cross-platform tests, UI checks, and coverage gates passed."
+          if [ "${{ needs.security.result }}" != "success" ]; then
+            echo "Security & lint checks failed (${{ needs.security.result }}). Blocking merge."
+            exit 1
+          fi
+          echo "All cross-platform pytest tests, security scans, UI checks, and coverage gates passed."
 
   build-standalone:
     name: Build Standalone (${{ matrix.os }})

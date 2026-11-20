@@ -5175,6 +5175,11 @@
           .replace(/'/g, "&#39;");
       }
 
+      function isSafeHttpUrl(raw) {
+        const s = String(raw ?? "").trim();
+        return /^https?:\/\/\S+$/i.test(s);
+      }
+
       function formatUtcTime(iso) {
         if (!iso || iso.length < 19) return "--:--Z";
         return `${iso.slice(11, 16)}Z`;
@@ -8328,7 +8333,9 @@
         const items = [];
         if (c.phone) items.push(`<span><strong>Phone:</strong> <span class="mono">${escHtml(c.phone)}</span></span>`);
         if (c.email) items.push(`<span><strong>Email:</strong> <a href="mailto:${encodeURIComponent(c.email)}" class="mono" style="color:var(--accent-blue);">${escHtml(c.email)}</a></span>`);
-        if (c.nwschat_url) items.push(`<span><strong>NWSChat/Web:</strong> <a href="${escHtml(c.nwschat_url)}" target="_blank" rel="noopener" class="mono" style="color:var(--accent-blue);">${escHtml(c.nwschat_url)}</a></span>`);
+        if (c.nwschat_url && isSafeHttpUrl(c.nwschat_url)) {
+          items.push(`<span><strong>NWSChat/Web:</strong> <a href="${escHtml(c.nwschat_url)}" target="_blank" rel="noopener noreferrer" class="mono" style="color:var(--accent-blue);">${escHtml(c.nwschat_url)}</a></span>`);
+        }
         if (c.radio_liaison) items.push(`<span><strong>Radio Liaison:</strong> <span class="mono">${escHtml(c.radio_liaison)}</span></span>`);
         if (c.winlink_address) items.push(`<span><strong>Winlink:</strong> <span class="mono">${escHtml(c.winlink_address)}</span></span>`);
         card.innerHTML = `
@@ -8951,11 +8958,11 @@
         $("btnDigSendBpqPacket").addEventListener("click", () => sendRadiogramViaBpqTelnet("packet"));
         $("btnDigOpenPat").addEventListener("click", () => {
           const url = $("btnDigOpenPat").dataset.patUrl;
-          if (url) window.open(url, "_blank", "noopener");
+          if (isSafeHttpUrl(url)) window.open(url, "_blank", "noopener,noreferrer");
         });
         $("btnDigOpenWebmail").addEventListener("click", () => {
           const url = $("btnDigOpenWebmail").dataset.webmailUrl;
-          if (url) window.open(url, "_blank", "noopener");
+          if (isSafeHttpUrl(url)) window.open(url, "_blank", "noopener,noreferrer");
         });
         $("btnCancelPrefs").addEventListener("click", cancelPreferencesModal);
         $("btnCancelPrefsTop").addEventListener("click", cancelPreferencesModal);
