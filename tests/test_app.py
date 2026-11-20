@@ -3149,19 +3149,3 @@ def test_app_title_and_frozen_bundle_dir_resolution(
     data_dir, bundle_dir = net_app._resolve_dirs()
     assert data_dir == fake_exe_dir.resolve()
     assert bundle_dir == fake_bundle
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

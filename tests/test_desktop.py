@@ -522,4 +522,3 @@ def test_windows_app_id_and_taskbar_icon(
     monkeypatch.setattr(desktop.ctypes, "windll", broken_windll, raising=False)
     assert desktop.set_windows_app_id() is False
     assert desktop.apply_windows_taskbar_icon("Test Window", ico) is False
-

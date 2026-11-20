@@ -112,9 +112,16 @@ When launching on a new machine, open **Preferences** (gear icon in the top bar)
 
 ---
 
-## Building a Standalone Bundle Locally & Running Tests
+## Building a Standalone Bundle Locally, Tests & Pre-Commit Hooks
 
 ```bash
+# Install dev dependencies & activate Git pre-commit / commit-msg / pre-push hooks
+uv sync --group dev
+uv run pre-commit install --install-hooks
+
+# Run all pre-commit hooks manually on the entire repository
+uv run pre-commit run --all-files
+
 # Run full test suite (with coverage gate >= 90%)
 uv run pytest -v
 
