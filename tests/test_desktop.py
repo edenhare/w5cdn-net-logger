@@ -442,9 +442,12 @@ def test_main_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(closed_handlers) == 1
     assert started_args[0]["debug"] is True
 
-    # 7. pywebview RuntimeError handled cleanly
+    # 7. pywebview RuntimeError handled cleanly (returns 1 on Windows, falls back to browser on Linux)
     fake_webview.start = lambda **_kw: (_ for _ in ()).throw(RuntimeError("WebView2 missing"))
+    monkeypatch.setattr(desktop.sys, "platform", "win32")
     assert desktop.main([]) == 1
+    monkeypatch.setattr(desktop.sys, "platform", "linux")
+    assert desktop.main([]) == 0
 
     # 8. stop_uvicorn_server forces exit if keep-alive socket keeps thread alive
     class StubbornServer:
