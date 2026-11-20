@@ -5309,7 +5309,11 @@
         }
         const htmlLines = text.split("\n").map((line) => {
           const safe = escHtml(line);
-          if (/^\s*===.+===\s*$/.test(line) || /^\s*\[.+\]\s*$/.test(line)) {
+          const trimmed = line.trim();
+          const isHeading =
+            (trimmed.startsWith("===") && trimmed.endsWith("===") && trimmed.length > 6) ||
+            (trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length > 2);
+          if (isHeading) {
             return `<span class="script-heading-line">${safe}</span>`;
           }
           return safe;

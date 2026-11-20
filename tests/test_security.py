@@ -523,3 +523,21 @@ def test_secrets_never_leaked_in_api_responses(client: TestClient) -> None:
     dig_text = client.get(f"/api/radiograms/{rg['id']}/digital").text
     assert secret_qrz not in dig_text
     assert secret_bpq not in dig_text
+
+
+def test_linear_time_parsing_resists_redos_inputs() -> None:
+    import time
+
+    spaces = " " * 50_000
+    t0 = time.perf_counter()
+    assert net_app.NwsWeatherService.parse_counties(f"{spaces}Travis County; {spaces}Hays Parish; {spaces}X") == [
+        "Travis",
+        "Hays",
+        "X",
+    ]
+    assert net_app.NwsWeatherService.normalize_county("Aleutians East Borough") == "Aleutians East"
+    assert net_app.NwsWeatherService.normalize_county("Yukon-Koyukuk Census Area") == "Yukon-Koyukuk"
+    assert net_app.CallsignLookupService._normalize_qrz_name(f"JOHN{spaces}DOE") == "John Doe"
+    assert net_app._extract_bpq_message_number(f"Message{spaces}Saved") == ""
+    assert net_app._extract_bpq_message_number("Message: 142 Saved") == "142"
+    assert (time.perf_counter() - t0) < 0.5

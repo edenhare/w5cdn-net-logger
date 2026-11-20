@@ -1718,8 +1718,7 @@ class CallsignLookupService:
 
     @staticmethod
     def _normalize_qrz_name(raw_name: str) -> str:
-        cleaned = re.sub(r"\s+\.", ".", (raw_name or "").strip())
-        cleaned = re.sub(r"\s+", " ", cleaned)
+        cleaned = " ".join((raw_name or "").split()).replace(" .", ".")
         if not cleaned:
             return ""
         roman_re = re.compile(r"^(?:II|III|IV|VI)$", re.IGNORECASE)
@@ -1737,8 +1736,7 @@ class CallsignLookupService:
 
     @staticmethod
     def _format_callook_name(raw_name: str) -> str:
-        raw = re.sub(r"\s+\.", ".", (raw_name or "").strip())
-        raw = re.sub(r"\s+", " ", raw)
+        raw = " ".join((raw_name or "").split()).replace(" .", ".")
         if not raw:
             return ""
 
@@ -1912,9 +1910,12 @@ class NwsWeatherService:
     """Async National Weather Service (api.weather.gov) county alerts & HWO fetcher."""
 
     BASE_URL = "https://api.weather.gov"
-    COUNTY_SUFFIX_RE = re.compile(
-        r"\s+(county|parish|borough|census\s+area|municipality)$",
-        re.IGNORECASE,
+    COUNTY_SUFFIXES: tuple[str, ...] = (
+        " census area",
+        " municipality",
+        " county",
+        " parish",
+        " borough",
     )
     SEVERITY_RANK: dict[str, int] = {
         "Extreme": 0,
@@ -1945,12 +1946,16 @@ class NwsWeatherService:
 
     @classmethod
     def normalize_county(cls, raw: str) -> str:
-        cleaned = re.sub(r"\s+", " ", (raw or "").strip())
-        return cls.COUNTY_SUFFIX_RE.sub("", cleaned).strip()
+        cleaned = " ".join((raw or "").split())
+        low = cleaned.lower()
+        for suffix in cls.COUNTY_SUFFIXES:
+            if low.endswith(suffix):
+                return cleaned[: -len(suffix)].strip()
+        return cleaned
 
     @classmethod
     def parse_counties(cls, raw: str) -> list[str]:
-        parts = re.split(r"[,;]+", raw or "")
+        parts = (raw or "").replace(";", ",").split(",")
         out: list[str] = []
         seen: set[str] = set()
         for p in parts:
@@ -5764,7 +5769,7 @@ async def get_radiogram_digital_payload(
     }
 
 
-BPQ_MSG_NUM_RE = re.compile(r"\b(?:message|msg)\s*[:#]?\s*(\d+)\b", re.IGNORECASE)
+BPQ_MSG_NUM_RE = re.compile(r"\b(?:message|msg)[\s:#]{1,8}(\d+)\b", re.IGNORECASE)
 
 
 def _extract_bpq_message_number(transcript: str) -> str:
