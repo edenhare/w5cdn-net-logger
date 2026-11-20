@@ -1,0 +1,115 @@
+name: CI & Standalone Releases
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }} --group dev
+
+      - name: Syntax check packaging script
+        run: uv run --python ${{ matrix.python-version }} python -m py_compile app.py desktop.py build_standalone.py
+
+      - name: Run full test suite, UI audit, code quality & coverage gate (>=90%)
+        run: uv run --python ${{ matrix.python-version }} pytest -v
+
+  all-checks-passed:
+    name: Required PR Merge Gate
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all test matrix jobs succeeded
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Test matrix failed (${{ needs.test.result }}). Blocking merge."
+            exit 1
+          fi
+          echo "All cross-platform tests, UI checks, and coverage gates passed."
+
+  build-standalone:
+    name: Build Standalone (${{ matrix.os }})
+    needs: [all-checks-passed]
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install runtime and packaging dependencies
+        run: uv sync --python 3.12 --group packaging
+
+      - name: Build standalone portable bundle
+        run: uv run --python 3.12 --group packaging python build_standalone.py
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-${{ matrix.os }}
+          path: release/W5CDN-Net-Logger-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-standalone]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download standalone artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-artifacts/W5CDN-Net-Logger-*.zip

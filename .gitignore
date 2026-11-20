@@ -1,0 +1,30 @@
+# Local runtime data & credentials (NEVER commit personal logs or passwords)
+.env
+*.db
+*.db-wal
+*.db-shm
+*.bak
+radiograms/
+outbox/
+
+# Python virtual environments & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build & packaging artifacts
+build/
+dist/
+*.spec
+release/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
