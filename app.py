@@ -97,6 +97,18 @@ def _sanitize_folder_path(raw: Any, max_len: int = 400) -> str:
     return cleaned
 
 
+def _safe_child_path(base_dir: Path, filename: str) -> Path:
+    """Resolve a single filename strictly inside base_dir (prevents path traversal)."""
+    clean_name = Path(filename).name
+    if not clean_name or clean_name in {".", ".."} or "/" in clean_name or "\\" in clean_name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    base_abs = os.path.abspath(str(base_dir))
+    full_path = os.path.normpath(os.path.join(base_abs, clean_name))
+    if not full_path.startswith(base_abs + os.sep):
+        raise HTTPException(status_code=400, detail="File path escapes target directory")
+    return Path(full_path)
+
+
 def _csv_safe_cell(val: Any) -> str:
     """Neutralize spreadsheet formula injection (CSV/Excel/Calc) while keeping negative numbers intact."""
     s = str(val if val is not None else "")
@@ -1636,7 +1648,7 @@ class CallsignLookupService:
             root = _parse_xml_safely(resp.text)
         except (httpx.HTTPError, ET.ParseError, OSError) as exc:
             logger.warning("QRZ connection test failed: %s", exc)
-            return {"ok": False, "message": f"Connection failed: {exc}"}
+            return {"ok": False, "message": "Connection failed: could not reach QRZ XML service."}
 
         session_map = self._xml_child_map(self._find_section(root, "Session"))
         key = session_map.get("Key")
@@ -3524,13 +3536,11 @@ async def _bpq_telnet_login(
             transcript_parts.append(after_user)
         low_u = after_user.lower()
         if any(bad in low_u for bad in BPQ_AUTH_ERROR_MARKERS):
-            raise ValueError(f"BPQ Telnet login rejected: {after_user.strip()}")
+            raise BpqProtocolError("auth_rejected")
 
         if "password:" in low_u or "enter password" in low_u or password:
             if ("password:" in low_u or "enter password" in low_u) and not password:
-                raise ValueError(
-                    "BPQ Telnet server requested a password, but no password is saved in Preferences."
-                )
+                raise BpqProtocolError("no_password")
             writer.write(f"{password}\r\n".encode("utf-8"))
             await writer.drain()
             transcript_parts.append(">>> ********\n")
@@ -3557,16 +3567,11 @@ async def _bpq_telnet_login(
                 transcript_parts.append(after_pass)
             low_p = after_pass.lower()
             if not after_pass.strip():
-                raise ValueError(
-                    "BPQ Telnet authentication failed — node closed connection or did not respond after password."
-                )
+                raise BpqProtocolError("auth_closed")
             if any(rep in low_p for rep in BPQ_AUTH_REPROMPT_MARKERS):
-                raise ValueError(
-                    "BPQ Telnet authentication failed — node re-prompted for credentials "
-                    "(verify exact-case username and password in bpq32.cfg)."
-                )
+                raise BpqProtocolError("auth_reprompt")
             if any(bad in low_p for bad in BPQ_AUTH_ERROR_MARKERS):
-                raise ValueError(f"BPQ Telnet authentication failed: {after_pass.strip()}")
+                raise BpqProtocolError("auth_rejected")
             return "[bpq-" in low_p or (
                 ">" in after_pass and ("de " in low_p or "bbs" in low_p)
             )
@@ -3574,8 +3579,27 @@ async def _bpq_telnet_login(
     combined = "".join(transcript_parts)
     low_c = combined.lower()
     if any(rep in low_c for rep in BPQ_AUTH_REPROMPT_MARKERS):
-        raise ValueError("BPQ Telnet login did not complete — node is still prompting for credentials.")
+        raise BpqProtocolError("auth_reprompt")
     return "[bpq-" in low_c or (">" in combined and "de " in low_c)
+
+
+BPQ_REASON_MESSAGES: dict[str, str] = {
+    "no_password": "BPQ Telnet server requested a password, but no password is saved in Preferences.",
+    "auth_closed": "BPQ Telnet authentication failed — node closed connection or did not respond after password.",
+    "auth_reprompt": "BPQ Telnet authentication failed — node re-prompted for credentials (verify exact-case username and password in bpq32.cfg).",
+    "auth_rejected": "BPQ Telnet authentication rejected by node. Verify username and password in bpq32.cfg.",
+    "bbs_enter": "Could not enter LinBPQ BBS. Check the BBS command and transcript.",
+    "bbs_recipient": "LinBPQ BBS rejected the recipient command. Check the transcript.",
+    "bbs_save": "LinBPQ BBS reported an error saving the message. Check the transcript.",
+}
+
+
+class BpqProtocolError(ValueError):
+    """Structured LinBPQ protocol error carrying a safe static reason code."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(BPQ_REASON_MESSAGES.get(reason, "BPQ Telnet protocol error."))
 
 
 async def _bpq_telnet_test(
@@ -3614,7 +3638,7 @@ async def _bpq_telnet_test(
             if any(rep in low_b for rep in BPQ_AUTH_REPROMPT_MARKERS) or any(
                 bad in low_b for bad in ("invalid", "error", "sorry")
             ):
-                raise ValueError(f"Could not enter BBS '{bbs_cmd}': {bbs_resp.strip()}")
+                raise BpqProtocolError("bbs_enter")
         writer.write(b"B\r\n")
         await writer.drain()
         transcript_parts.append(">>> B\n")
@@ -3626,10 +3650,18 @@ async def _bpq_telnet_test(
             "message": f"BPQ Telnet login succeeded on {host}:{port} as {username}.",
             "transcript": "".join(transcript_parts).strip(),
         }
-    except (OSError, asyncio.TimeoutError, ValueError) as exc:
+    except BpqProtocolError as exc:
+        logger.warning("BPQ Telnet test protocol failure (%s:%s): %s", host, port, exc.reason)
         return {
             "ok": False,
-            "message": f"BPQ Telnet test failed ({host}:{port}): {exc}",
+            "message": BPQ_REASON_MESSAGES.get(exc.reason, f"BPQ Telnet test failed ({host}:{port})."),
+            "transcript": "".join(transcript_parts).strip(),
+        }
+    except (OSError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("BPQ Telnet test failed (%s:%s): %s", host, port, exc)
+        return {
+            "ok": False,
+            "message": f"BPQ Telnet test failed ({host}:{port}). Check host, port, and credentials.",
             "transcript": "".join(transcript_parts).strip(),
         }
     finally:
@@ -3683,7 +3715,7 @@ async def _bpq_telnet_send_message(
             if any(rep in low_b for rep in BPQ_AUTH_REPROMPT_MARKERS) or any(
                 bad in low_b for bad in ("invalid", "error", "sorry")
             ):
-                raise ValueError(f"Could not enter BBS '{clean_bbs_cmd}': {bbs_resp.strip()}")
+                raise BpqProtocolError("bbs_enter")
 
         writer.write(f"{clean_sp_cmd}\r\n".encode("utf-8"))
         await writer.drain()
@@ -3695,7 +3727,7 @@ async def _bpq_telnet_send_message(
             transcript_parts.append(subj_prompt)
         low_sp = subj_prompt.lower()
         if any(bad in low_sp for bad in ("invalid", "not found", "cannot", "rejected")):
-            raise ValueError(f"BBS rejected recipient command '{clean_sp_cmd}': {subj_prompt.strip()}")
+            raise BpqProtocolError("bbs_recipient")
 
         clean_subj = _clean_single_line(subject, 80) or "RADIOGRAM"
         writer.write(f"{clean_subj}\r\n".encode("utf-8"))
@@ -3729,7 +3761,7 @@ async def _bpq_telnet_send_message(
             transcript_parts.append(confirm)
         low_cf = confirm.lower()
         if any(bad in low_cf for bad in ("error", "invalid", "rejected", "failed")):
-            raise ValueError(f"BBS reported error saving message: {confirm.strip()}")
+            raise BpqProtocolError("bbs_save")
 
         writer.write(b"B\r\n")
         await writer.drain()
@@ -3743,10 +3775,18 @@ async def _bpq_telnet_send_message(
             "message": f"Message submitted to LinBPQ node {host}:{port} via '{sp_cmd}'.",
             "transcript": "".join(transcript_parts).strip(),
         }
-    except (OSError, asyncio.TimeoutError, ValueError) as exc:
+    except BpqProtocolError as exc:
+        logger.warning("BPQ Telnet send protocol failure (%s:%s): %s", host, port, exc.reason)
         return {
             "ok": False,
-            "message": f"BPQ Telnet send failed ({host}:{port}): {exc}",
+            "message": BPQ_REASON_MESSAGES.get(exc.reason, f"BPQ Telnet send failed ({host}:{port})."),
+            "transcript": "".join(transcript_parts).strip(),
+        }
+    except (OSError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("BPQ Telnet send failed (%s:%s): %s", host, port, exc)
+        return {
+            "ok": False,
+            "message": f"BPQ Telnet send failed ({host}:{port}). Check node status and transcript.",
             "transcript": "".join(transcript_parts).strip(),
         }
     finally:
@@ -3788,7 +3828,8 @@ async def test_digital_node_preferences() -> dict[str, Any]:
         try:
             outbox.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return {"ok": False, "message": f"Outbox folder {outbox} is not writable: {exc}"}
+            logger.warning("Outbox folder %s is not writable: %s", outbox, exc)
+            return {"ok": False, "message": f"Outbox folder {outbox} is not writable."}
         parts = [
             routing.get("remote_operator_call"),
             routing.get("remote_system_name"),
@@ -3837,9 +3878,10 @@ async def test_digital_node_preferences() -> dict[str, Any]:
                 "message": f"{prefix} listening at {host}:{port}. Add BPQ Telnet username/password to test login and direct send.",
             }
         except (OSError, asyncio.TimeoutError) as exc:
+            logger.warning("Could not connect to %s at %s:%s: %s", prefix, host, port, exc)
             return {
                 "ok": False,
-                "message": f"Could not connect to {prefix} at {host}:{port}: {exc}",
+                "message": f"Could not connect to {prefix} at {host}:{port}.",
             }
 
     if proto == "Pat HTTP" or (transport == "pat" and proto != "None / Manual Relay"):
@@ -3857,9 +3899,10 @@ async def test_digital_node_preferences() -> dict[str, Any]:
                 "message": f"{prefix} reachable at {target_url} (HTTP {resp.status_code}).",
             }
         except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.warning("Could not reach %s at %s: %s", prefix, target_url, exc)
             return {
                 "ok": False,
-                "message": f"Could not reach {prefix} at {target_url}: {exc}",
+                "message": f"Could not reach {prefix} at {target_url}.",
             }
 
     if proto in {"KISS TCP", "AGWPE"}:
@@ -3879,9 +3922,10 @@ async def test_digital_node_preferences() -> dict[str, Any]:
                 "message": f"{prefix} listening at {host}:{port}.",
             }
         except (OSError, asyncio.TimeoutError) as exc:
+            logger.warning("Could not connect to %s at %s:%s: %s", prefix, host, port, exc)
             return {
                 "ok": False,
-                "message": f"Could not connect to {prefix} at {host}:{port}: {exc}",
+                "message": f"Could not connect to {prefix} at {host}:{port}.",
             }
 
     if proto == "Serial TNC":
@@ -3902,9 +3946,10 @@ async def test_digital_node_preferences() -> dict[str, Any]:
                 "message": f"Remote station ({remote_label}) reachable at {target_url} (HTTP {resp.status_code}).",
             }
         except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.warning("Could not reach remote station (%s) at %s: %s", remote_label, target_url, exc)
             return {
                 "ok": False,
-                "message": f"Could not reach remote station ({remote_label}) at {target_url}: {exc}",
+                "message": f"Could not reach remote station ({remote_label}) at {target_url}.",
             }
 
     outbox = get_digital_outbox_dir(routing)
@@ -3912,7 +3957,8 @@ async def test_digital_node_preferences() -> dict[str, Any]:
         outbox.mkdir(parents=True, exist_ok=True)
         return {"ok": True, "message": f"Digital outbox folder ready: {outbox}"}
     except OSError as exc:
-        return {"ok": False, "message": f"Outbox folder {outbox} is not writable: {exc}"}
+        logger.warning("Outbox folder %s is not writable: %s", outbox, exc)
+        return {"ok": False, "message": f"Outbox folder {outbox} is not writable."}
 
 
 @app.get("/api/nws/county-report")
@@ -3996,7 +4042,7 @@ async def get_nws_county_report(
         logger.warning("NWS county report request failed for %s, %s: %s", req_county, req_state, exc)
         raise HTTPException(
             status_code=502,
-            detail=f"Could not retrieve NWS report from api.weather.gov: {exc}",
+            detail="Could not retrieve NWS report from api.weather.gov.",
         ) from exc
 
 
@@ -5908,7 +5954,7 @@ async def stage_radiogram_to_outbox(
         tag = "WINLINK"
     nr_slug = safe_filename_slug(str(rg.get("msg_number") or "1")).upper()
     filename = f"NR_{nr_slug}_{tag}_{rg['id']}.txt"
-    target = outbox / filename
+    target = _safe_child_path(outbox, filename)
     target.write_text(content, encoding="utf-8")
     return {"staged": True, "format_type": payload.format_type, "file_path": str(target), "filename": filename}
 
@@ -6099,7 +6145,7 @@ async def push_net_report_to_digital_target(
         tag = "WINLINK"
     slug = safe_filename_slug(str(net["name"])).upper()
     filename = f"NET_{net_id}_{slug}_{tag}.txt"
-    target = outbox / filename
+    target = _safe_child_path(outbox, filename)
     target.write_text(content, encoding="utf-8")
     return {
         "ok": True,
@@ -6361,18 +6407,25 @@ async def restore_backup_archive(request: Request) -> dict[str, Any]:
                 init_db()
                 rg_dir = get_radiograms_dir()
                 rg_dir.mkdir(parents=True, exist_ok=True)
+                rg_base_abs = os.path.abspath(str(rg_dir))
                 restored_files = 0
                 for member in zf.namelist():
                     if member.startswith("radiograms/") and member.endswith(".txt"):
                         safe_name = Path(member).name
-                        if safe_name:
-                            (rg_dir / safe_name).write_bytes(zf.read(member))
+                        if safe_name and safe_name not in {".", ".."}:
+                            dest_path = os.path.normpath(os.path.join(rg_base_abs, safe_name))
+                            if not dest_path.startswith(rg_base_abs + os.sep):
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail="Backup archive contains an unsafe radiogram path",
+                                )
+                            Path(dest_path).write_bytes(zf.read(member))
                             restored_files += 1
     except HTTPException:
         raise
     except (zipfile.BadZipFile, sqlite3.Error, OSError, ValueError) as exc:
         logger.warning("Backup restore failed: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Invalid backup archive: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Invalid or corrupt backup archive") from exc
 
     lookup_service.reset_qrz_session()
     with get_db() as conn:

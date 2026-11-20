@@ -470,8 +470,10 @@ def test_lookup_endpoint_and_services(
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
+        host = request.url.host
+        path = request.url.path
         calls_made.append(url)
-        if "xmldata.qrz.com" in url:
+        if host == "xmldata.qrz.com":
             if "username=" in url:
                 return httpx.Response(
                     200,
@@ -503,7 +505,7 @@ def test_lookup_endpoint_and_services(
                 200,
                 text='<QRZDatabase xmlns="http://xmldata.qrz.com"><Session><Error>Not found</Error></Session></QRZDatabase>',
             )
-        if "callook.info/KJ5ABC/json" in url:
+        if host == "callook.info" and path == "/KJ5ABC/json":
             return httpx.Response(
                 200,
                 json={
@@ -514,7 +516,7 @@ def test_lookup_endpoint_and_services(
                     "location": {"gridsquare": "em10dg"},
                 },
             )
-        if "callook.info/N0CITY/json" in url:
+        if host == "callook.info" and path == "/N0CITY/json":
             return httpx.Response(
                 200,
                 json={
@@ -525,7 +527,7 @@ def test_lookup_endpoint_and_services(
                     "location": {"gridsquare": ""},
                 },
             )
-        if "callook.info/BADJSON/json" in url:
+        if host == "callook.info" and path == "/BADJSON/json":
             return httpx.Response(200, text="{broken json")
         return httpx.Response(200, json={"status": "INVALID"})
 
@@ -1304,8 +1306,9 @@ def test_light_themes_and_open_net_warning_modal(client: TestClient) -> None:
 
 def test_checkin_and_net_start_auto_lookup_callsign(client: TestClient) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        url = str(request.url)
-        if "callook.info/W5CDN/json" in url:
+        host = request.url.host
+        path = request.url.path
+        if host == "callook.info" and path == "/W5CDN/json":
             return httpx.Response(
                 200,
                 json={
@@ -1316,7 +1319,7 @@ def test_checkin_and_net_start_auto_lookup_callsign(client: TestClient) -> None:
                     "location": {"gridsquare": "em12"},
                 },
             )
-        if "callook.info/N5AUTO/json" in url:
+        if host == "callook.info" and path == "/N5AUTO/json":
             return httpx.Response(
                 200,
                 json={
