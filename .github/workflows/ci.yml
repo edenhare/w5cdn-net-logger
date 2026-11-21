@@ -45,7 +45,74 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} python -m py_compile src/net_logger/app.py src/net_logger/desktop.py src/net_logger/updater.py scripts/build_standalone.py scripts/generate_changelog.py
 
       - name: Run full pytest suite (API, security, UI integrity, code quality & >=90% coverage)
-        run: uv run --python ${{ matrix.python-version }} pytest -v --junitxml=pytest-results.xml --cov-report=json:coverage.json
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run --python ${{ matrix.python-version }} pytest -v -ra --junitxml=pytest-results.xml --cov-report=json:coverage.json 2>&1 | tee pytest-output.log
+
+      - name: Publish pytest & coverage output to Job Summary
+        if: always()
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_PY: ${{ matrix.python-version }}
+        run: |
+          uv run --python ${{ matrix.python-version }} python - <<'PY'
+          import json, os, pathlib, xml.etree.ElementTree as ET
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if not summary_path:
+              raise SystemExit(0)
+
+          matrix_os = os.environ.get("MATRIX_OS", "")
+          matrix_py = os.environ.get("MATRIX_PY", "")
+          lines = [f"## Pytest & Coverage ({matrix_os} / Python {matrix_py})", ""]
+
+          junit = pathlib.Path("pytest-results.xml")
+          if junit.is_file():
+              root = ET.parse(junit).getroot()
+              suite = root.find("testsuite") if root.tag == "testsuites" else root
+              if suite is not None:
+                  t = int(suite.attrib.get("tests", 0))
+                  f = int(suite.attrib.get("failures", 0))
+                  e = int(suite.attrib.get("errors", 0))
+                  s = int(suite.attrib.get("skipped", 0))
+                  p = max(0, t - f - e - s)
+                  lines.append(f"**Results:** {p} passed, {f} failed, {e} errors, {s} skipped (total: {t})")
+                  lines.append("")
+
+          cov = pathlib.Path("coverage.json")
+          if cov.is_file():
+              data = json.loads(cov.read_text(encoding="utf-8"))
+              total_pct = round(float(data.get("totals", {}).get("percent_covered", 0.0)), 2)
+              lines.append(f"**Total Coverage:** {total_pct}% (gate: >= 90%)")
+              lines.append("")
+              lines.append("| Module | Coverage |")
+              lines.append("| :--- | :---: |")
+              for fname, fdata in sorted(data.get("files", {}).items()):
+                  pct = round(float(fdata.get("summary", {}).get("percent_covered", 0.0)), 1)
+                  lines.append(f"| `{fname}` | {pct}% |")
+              lines.append("")
+
+          log = pathlib.Path("pytest-output.log")
+          if log.is_file():
+              text = log.read_text(encoding="utf-8", errors="replace")
+              if len(text) > 120000:
+                  text = text[:40000] + "\n... [truncated middle] ...\n" + text[-75000:]
+              lines.extend([
+                  "<details open>",
+                  "<summary>Full pytest & coverage console output</summary>",
+                  "",
+                  "```text",
+                  text.rstrip(),
+                  "```",
+                  "</details>",
+                  "",
+              ])
+
+          with open(summary_path, "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines))
+          PY
 
       - name: Export pytest & coverage metrics
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
@@ -102,17 +169,80 @@ jobs:
 
       - name: Lint & bug-check with Ruff
         id: ruff
-        run: uvx ruff check src scripts tests
+        shell: bash
+        run: |
+          set -o pipefail
+          uvx ruff check --output-format=full src scripts tests 2>&1 | tee ruff.log
 
       - name: Static security scan with Bandit (Medium/High severity)
         id: bandit
         if: always()
-        run: uvx bandit -r src scripts -ll
+        shell: bash
+        run: |
+          set -o pipefail
+          uvx bandit -r src scripts -ll 2>&1 | tee bandit.log
 
       - name: Dependency vulnerability audit (pip-audit)
         id: pip_audit
         if: always()
-        run: uv run --python 3.12 --with pip-audit pip-audit --skip-editable
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run --python 3.12 --with pip-audit pip-audit --skip-editable --desc 2>&1 | tee pip-audit.log
+
+      - name: Publish security tool outputs to Job Summary
+        if: always()
+        shell: bash
+        env:
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          uv run --python 3.12 python - <<'PY'
+          import os, pathlib
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if not summary_path:
+              raise SystemExit(0)
+
+          def badge(val):
+              return "✅ Passed" if val == "success" else ("❌ Failed" if val == "failure" else f"⏭️ {val}")
+
+          tools = [
+              ("Ruff Lint & Bug Check", os.environ.get("RUFF_OUTCOME", "skipped"), "ruff.log"),
+              ("Bandit SAST (Medium/High)", os.environ.get("BANDIT_OUTCOME", "skipped"), "bandit.log"),
+              ("pip-audit Dependency CVE Scan", os.environ.get("AUDIT_OUTCOME", "skipped"), "pip-audit.log"),
+          ]
+
+          lines = [
+              "## Security & Static Analysis Tool Outputs",
+              "",
+              "| Tool | Status |",
+              "| :--- | :---: |",
+          ]
+          for title, outcome, _ in tools:
+              lines.append(f"| **{title}** | {badge(outcome)} |")
+          lines.append("")
+
+          for title, outcome, log_name in tools:
+              p = pathlib.Path(log_name)
+              body = p.read_text(encoding="utf-8", errors="replace").strip() if p.is_file() else "(no output captured)"
+              if not body:
+                  body = "(no output)"
+              lines.extend([
+                  "<details open>",
+                  f"<summary>{title} — {badge(outcome)}</summary>",
+                  "",
+                  "```text",
+                  body[:60000],
+                  "```",
+                  "</details>",
+                  "",
+              ])
+
+          with open(summary_path, "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines))
+          PY
 
       - name: Export security tool statuses
         if: always()
@@ -249,8 +379,12 @@ jobs:
             if (ciMetrics && ciMetrics.tests > 0) {
               testDetail = `**${ciMetrics.passed} passed**, ${ciMetrics.failures} failed, ${ciMetrics.errors} errors, ${ciMetrics.skipped} skipped (Ubuntu & Windows × Py 3.11/3.12)`;
               if (ciMetrics.coverage_total !== null) {
-                const appCov = ciMetrics.files && ciMetrics.files['app.py'] !== undefined ? ` (\`app.py\`: ${ciMetrics.files['app.py']}%, \`desktop.py\`: ${ciMetrics.files['desktop.py'] ?? 'n/a'}%)` : '';
-                covDetail = `**${ciMetrics.coverage_total}%**${appCov} — gate: >= 90%`;
+                const f = ciMetrics.files || {};
+                const parts = ['app.py', 'desktop.py', 'updater.py']
+                  .filter((k) => f[k] !== undefined)
+                  .map((k) => `\`${k}\`: ${f[k]}%`);
+                const fileCov = parts.length ? ` (${parts.join(', ')})` : '';
+                covDetail = `**${ciMetrics.coverage_total}%**${fileCov} — gate: >= 90%`;
               }
             }
 
@@ -283,6 +417,10 @@ jobs:
               '',
               `_Commit \`${shortSha}\` • [View full CI run logs](${runUrl})_`,
             ].join('\n');
+
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n\n`, 'utf8');
+            }
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
@@ -385,6 +523,16 @@ jobs:
           cd release-artifacts
           sha256sum W5CDN-Net-Logger-*.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          {
+            echo "## Release ${GITHUB_REF_NAME}"
+            echo ""
+            cat CHANGELOG.md
+            echo ""
+            echo "### SHA-256 Checksums"
+            echo '```text'
+            cat SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
