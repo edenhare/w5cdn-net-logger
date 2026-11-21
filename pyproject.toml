@@ -22,6 +22,7 @@ packages = ["src/net_logger"]
 
 [dependency-groups]
 dev = [
+    "httpx2>=0.1.0",
     "pre-commit>=4.0.0",
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
