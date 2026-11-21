@@ -16,6 +16,10 @@ dev = [
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
 ]
+ui = [
+    "axe-playwright-python>=0.1.5",
+    "playwright>=1.50.0",
+]
 packaging = [
     "pyinstaller>=6.11.0",
 ]
@@ -24,6 +28,9 @@ packaging = [
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "--cov=app --cov=desktop --cov-report=term-missing --cov-fail-under=90"
+markers = [
+    "ui: Playwright real-browser UI E2E and WCAG accessibility tests",
+]
 
 [tool.ruff]
 target-version = "py311"
