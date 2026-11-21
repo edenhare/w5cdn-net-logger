@@ -782,3 +782,121 @@ def test_ui_downloads_uploads_reload_and_negative_ux(live_app_server: str, tmp_p
         bpq_stop.set()
         bpq_srv.close()
         bpq_thread.join(timeout=2.0)
+
+
+@pytest.mark.ui
+def test_ui_self_updater_banner_modal_open_net_lock_and_wcag(
+    live_app_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise self-updater topbar banner, Preferences card, WCAG contrast, open-net lock, and apply flow."""
+    axe_mod = pytest.importorskip("axe_playwright_python.sync_playwright")
+    axe = axe_mod.Axe()
+
+    async def _mock_update_avail(**kwargs):
+        return {
+            "online": True,
+            "repo": "edenhare/w5cdn-net-logger",
+            "install_mode": "git",
+            "current_version": kwargs.get("current_version", net_app.APP_VERSION),
+            "latest_version": "0.2.0",
+            "update_available": True,
+            "can_self_update": True,
+            "release_name": "v0.2.0",
+            "release_url": "https://github.com/edenhare/w5cdn-net-logger/releases/tag/v0.2.0",
+            "published_at": "2026-11-21T12:00:00Z",
+            "release_notes": "Added dual-mode self-updater and SHA-256 verification.",
+            "asset_name": "W5CDN-Net-Logger-windows-amd64.zip",
+            "asset_url": "https://github.com/edenhare/w5cdn-net-logger/releases/download/v0.2.0/W5CDN-Net-Logger-windows-amd64.zip",
+            "checksum_url": "https://github.com/edenhare/w5cdn-net-logger/releases/download/v0.2.0/SHA256SUMS.txt",
+            "message": "Version 0.2.0 is available (currently running 0.1.0).",
+        }
+
+    applied_calls: list[bool] = []
+    monkeypatch.setattr(net_app.updater, "check_for_update", _mock_update_avail)
+    monkeypatch.setattr(net_app.updater, "detect_install_mode", lambda _d: "git")
+    monkeypatch.setattr(
+        net_app.updater,
+        "apply_git_update",
+        lambda _d, _db: (
+            applied_calls.append(True),
+            {
+                "ok": True,
+                "mode": "git",
+                "branch": "main",
+                "restart_required": True,
+                "backup_created": True,
+                "message": "Updated Git branch 'main' from origin. Restart W5CDN Net Logger to load the new version.",
+            },
+        )[1],
+    )
+
+    page_errors: list[str] = []
+    console_errors: list[str] = []
+    with sync_api.sync_playwright() as p:
+        browser = _launch_headless_browser(p)
+        page = browser.new_page(viewport={"width": 1366, "height": 840})
+        page.on("pageerror", lambda err: page_errors.append(str(err)))
+        page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+        page.on("dialog", lambda dialog: dialog.accept())
+
+        page.goto(live_app_server, wait_until="networkidle")
+
+        # 1. Topbar update pill appears automatically on boot and passes WCAG
+        banner = page.locator("#btnUpdateBanner")
+        banner.wait_for(state="visible", timeout=5000)
+        assert "0.2.0" in banner.inner_text()
+
+        wcag_home = axe.run(page, options={"runOnly": {"type": "tag", "values": ["wcag2a", "wcag2aa"]}})
+        assert not wcag_home.response.get("violations"), wcag_home.generate_report()
+
+        # 2. Clicking topbar pill opens Preferences -> Application Updates card & passes WCAG
+        banner.click()
+        page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.locator("#updateReleaseNotes").wait_for(state="visible", timeout=5000)
+        assert "GIT CHECKOUT" in page.locator("#updateModePill").inner_text()
+        assert "SHA-256 verification" in page.locator("#updateReleaseNotes").inner_text()
+        assert page.locator("#updateReleaseLink").is_visible()
+        assert page.locator("#btnApplyUpdate").is_visible()
+        assert page.locator("#btnApplyUpdate").is_enabled()
+
+        wcag_prefs = axe.run(page, options={"runOnly": {"type": "tag", "values": ["wcag2a", "wcag2aa"]}})
+        assert not wcag_prefs.response.get("violations"), wcag_prefs.generate_report()
+
+        page.click("#btnCancelPrefsTop")
+        page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # 3. Open a net -> Install Update button becomes disabled with safety warning
+        page.click("#btnNewNet")
+        page.locator("#netModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.fill("#netFormName", "Updater Lock Test Net")
+        page.click("#netFormSubmitBtn")
+        page.locator("#netModalBackdrop").wait_for(state="hidden", timeout=5000)
+
+        banner.click()
+        page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.click("#btnCheckUpdate")
+        page.locator("#updateStatusText", has_text="Close active net sessions").wait_for(
+            state="visible", timeout=5000
+        )
+        assert page.locator("#btnApplyUpdate").is_disabled()
+        page.click("#btnCancelPrefsTop")
+        page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # 4. Close the net -> Install Update re-enables and applies cleanly
+        page.click("#btnCloseReopenNet")
+        page.locator("#activeNetWorkspace").wait_for(state="hidden", timeout=5000)
+
+        banner.click()
+        page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.click("#btnCheckUpdate")
+        page.locator("#btnApplyUpdate:not([disabled])").wait_for(state="visible", timeout=5000)
+        page.click("#btnApplyUpdate")
+        page.locator("#updateStatusText", has_text="Updated Git branch 'main'").wait_for(
+            state="visible", timeout=5000
+        )
+        assert applied_calls == [True]
+        assert banner.is_hidden()
+
+        assert not page_errors, f"Uncaught JS errors: {page_errors}"
+        assert not console_errors, f"Console errors: {console_errors}"
+        browser.close()
