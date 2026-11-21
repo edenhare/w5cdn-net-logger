@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import logging
 import os
 import shutil
@@ -336,7 +337,55 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=parse_port(os.environ.get("PORT"), default=8765),
         help="Preferred localhost port (default: 8765)",
     )
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Start the local server, verify HTTP / and /api/config respond 200, and exit without opening a window",
+    )
+    parser.add_argument(
+        "--smoke-test-out",
+        default="",
+        help="Optional JSON file path to write --smoke-test verification results",
+    )
     return parser.parse_args(argv)
+
+
+def run_smoke_test(url: str, out_path: str = "") -> bool:
+    """Verify the running local server serves index.html and /api/config cleanly."""
+    result: dict[str, object] = {
+        "ok": False,
+        "url": url,
+        "index_status": 0,
+        "config_status": 0,
+        "version": "",
+        "install_mode": "",
+    }
+    try:
+        idx = httpx.get(f"{url}/", timeout=5.0)
+        cfg = httpx.get(f"{url}/api/config", timeout=5.0)
+        result["index_status"] = idx.status_code
+        result["config_status"] = cfg.status_code
+        cfg_json = cfg.json() if cfg.status_code == 200 else {}
+        result["version"] = str(cfg_json.get("version") or "")
+        result["install_mode"] = str(cfg_json.get("install_mode") or "")
+        result["ok"] = (
+            idx.status_code == 200
+            and APP_TITLE in idx.text
+            and cfg.status_code == 200
+            and bool(result["version"])
+            and bool(result["install_mode"])
+        )
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.error("Smoke test failed: %s", exc)
+        result["ok"] = False
+
+    payload = json.dumps(result, indent=2)
+    if out_path:
+        dest = Path(out_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(payload + "\n", encoding="utf-8")
+    print(f"SMOKE_TEST_{'OK' if result['ok'] else 'FAILED'} {payload}")
+    return bool(result["ok"])
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -355,6 +404,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         stop_uvicorn_server(server, thread)
         print("Error: Local Net Logger backend failed to start.", file=sys.stderr)
         return 1
+
+    if args.smoke_test:
+        ok = run_smoke_test(url, out_path=args.smoke_test_out)
+        stop_uvicorn_server(server, thread)
+        return 0 if ok else 1
 
     preferred_browser = (
         "chrome"

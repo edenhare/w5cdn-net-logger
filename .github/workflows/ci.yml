@@ -589,6 +589,63 @@ jobs:
       - name: Build standalone portable bundle
         run: uv run --python 3.12 --group packaging python scripts/build_standalone.py
 
+      - name: Smoke-test built standalone executable
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+        run: |
+          uv run --python 3.12 python - <<'PY'
+          import json, os, pathlib, subprocess, sys, tempfile, zipfile
+
+          zips = sorted(pathlib.Path("release").glob("W5CDN-Net-Logger-*.zip"))
+          assert zips, "No standalone release zip found!"
+          zip_path = zips[0]
+
+          with tempfile.TemporaryDirectory() as tmp:
+              tmp_dir = pathlib.Path(tmp)
+              with zipfile.ZipFile(zip_path, "r") as zf:
+                  zf.extractall(tmp_dir)
+
+              app_dir = tmp_dir / "W5CDN-Net-Logger"
+              exe = app_dir / ("W5CDN-Net-Logger.exe" if sys.platform == "win32" else "W5CDN-Net-Logger")
+              assert exe.is_file(), f"Built executable missing: {exe}"
+              if sys.platform != "win32":
+                  os.chmod(exe, 0o755)
+
+              smoke_out = tmp_dir / "smoke-result.json"
+              env = os.environ.copy()
+              env["NET_LOGGER_DB"] = str(tmp_dir / "smoke.db")
+              env["NET_LOGGER_NO_AUTO_EXIT"] = "1"
+              proc = subprocess.run(
+                  [str(exe), "--smoke-test", "--smoke-test-out", str(smoke_out), "--port", "0"],
+                  cwd=str(app_dir),
+                  env=env,
+                  capture_output=True,
+                  text=True,
+                  timeout=45.0,
+                  check=False,
+              )
+              assert proc.returncode == 0, f"Standalone smoke test failed (rc={proc.returncode}): {proc.stdout} {proc.stderr}"
+              assert smoke_out.is_file(), "Smoke test did not write verification JSON"
+              data = json.loads(smoke_out.read_text(encoding="utf-8"))
+              assert data.get("ok") is True, f"Smoke test reported failure: {data}"
+              assert data.get("install_mode") == "standalone", f"Expected standalone install_mode: {data}"
+              assert data.get("index_status") == 200 and data.get("config_status") == 200
+
+              size_mb = round(zip_path.stat().st_size / (1024 * 1024), 2)
+              print(f"Standalone smoke test PASSED for {zip_path.name} ({size_mb} MiB): {json.dumps(data)}")
+              summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+              if summary_path:
+                  with open(summary_path, "a", encoding="utf-8") as fh:
+                      fh.write(
+                          f"## Standalone Bundle Smoke Test ({os.environ.get('MATRIX_OS', '')})\n\n"
+                          f"- **Artifact:** `{zip_path.name}` ({size_mb} MiB)\n"
+                          f"- **Executable launch:** ✅ Passed (`--smoke-test`)\n"
+                          f"- **HTTP `/`:** `{data['index_status']}` • **HTTP `/api/config`:** `{data['config_status']}`\n"
+                          f"- **Detected Mode:** `{data['install_mode']}` • **Version:** `{data['version']}`\n\n"
+                      )
+          PY
+
       - name: Upload standalone artifact
         uses: actions/upload-artifact@v7
         with:

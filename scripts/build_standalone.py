@@ -56,6 +56,8 @@ def build_bundle() -> Path:
         "--hidden-import",
         "net_logger.app",
         "--hidden-import",
+        "net_logger.updater",
+        "--hidden-import",
         "uvicorn.logging",
         "--hidden-import",
         "uvicorn.loops.auto",
