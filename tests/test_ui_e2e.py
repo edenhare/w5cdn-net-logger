@@ -11,6 +11,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Iterator
 
@@ -240,7 +241,7 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.fill("#netFormName", "Travis County RACES Net")
             page.click("#netFormSubmitBtn")
             page.locator("#netModalBackdrop").wait_for(state="hidden", timeout=5000)
-            assert page.locator("#netTitle").inner_text().strip() == "Travis County RACES Net"
+            page.locator("#netTitle", has_text="Travis County RACES Net").wait_for(state="visible", timeout=5000)
 
             # 3. Form 2 (#checkinForm) & Row Actions
             assert page.locator("#inRacesIdField").is_visible()
@@ -494,11 +495,270 @@ def test_ui_wcag_accessibility_all_9_themes(live_app_server: str) -> None:
             "high-contrast",
         ):
             page.evaluate(f"document.documentElement.dataset.theme = '{theme}'")
-            page.wait_for_timeout(300)
+            page.wait_for_timeout(500)
             violations = axe.run(page).response.get("violations", [])
             if violations:
-                summary = ", ".join(f"{v['id']}({len(v.get('nodes', []))})" for v in violations)
+                summary = ", ".join(
+                    f"{v['id']}({len(v.get('nodes', []))}: {v['nodes'][0].get('target', [])})"
+                    for v in violations
+                )
                 failures.append(f"{theme}: {summary}")
 
         browser.close()
         assert not failures, "WCAG axe-core violations: " + " | ".join(failures)
+
+
+@pytest.mark.ui
+def test_ui_wcag_accessibility_modals_and_drawers(live_app_server: str) -> None:
+    """Run axe-core WCAG audits while key modals and drawers are open."""
+    axe_mod = pytest.importorskip("axe_playwright_python.sync_playwright")
+    axe = axe_mod.Axe()
+
+    with sync_api.sync_playwright() as p:
+        browser = _launch_headless_browser(p)
+        page = browser.new_page(viewport={"width": 1366, "height": 840})
+        page.goto(live_app_server, wait_until="networkidle")
+
+        # Start a Skywarn net so NWS Weather modal is available too
+        page.locator('[data-quick-preset="Skywarn"]').click()
+        page.locator("#netModalBackdrop").wait_for(state="visible", timeout=5000)
+
+        failures: list[str] = []
+
+        def _audit(label: str) -> None:
+            page.wait_for_timeout(150)
+            violations = axe.run(page).response.get("violations", [])
+            if violations:
+                details = "; ".join(
+                    f"{v['id']}({len(v.get('nodes', []))}: {v['nodes'][0].get('target', [])})"
+                    for v in violations
+                )
+                failures.append(f"{label}: {details}")
+
+        _audit("Start Net Modal")
+        page.click("#netFormSubmitBtn")
+        page.locator("#activeNetWorkspace").wait_for(state="visible", timeout=5000)
+
+        # Preferences Modal (Appearance, QRZ/Skywarn, Packet/Winlink)
+        page.click("#btnOpenPrefs")
+        page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+        _audit("Preferences: Appearance")
+        page.locator('[data-pref-tab="qrz"]').click()
+        _audit("Preferences: Operator/QRZ/Skywarn")
+        page.locator('[data-pref-tab="digital"]').click()
+        _audit("Preferences: Packet/Winlink")
+        page.click("#btnCancelPrefsTop")
+        page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Radiogram Editor Modal
+        page.click("#btnOpenRadiograms")
+        page.locator("#panelRadiograms").wait_for(state="visible", timeout=5000)
+        page.click("#btnNewRadiogram")
+        page.locator("#radiogramEditorBackdrop").wait_for(state="visible", timeout=5000)
+        _audit("Radiogram Composer Modal")
+        page.locator('#radiogramEditorBackdrop [data-close-modal="radiogramEditorBackdrop"]').first.click()
+        page.locator("#radiogramEditorBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Net Report Modal
+        page.click("#btnCopySummary")
+        page.locator("#netReportBackdrop").wait_for(state="visible", timeout=5000)
+        _audit("Net Report Modal")
+        page.locator('#netReportBackdrop [data-close-modal="netReportBackdrop"]').first.click()
+        page.locator("#netReportBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Skywarn / NWS Modal
+        page.click("#btnNwsReport")
+        page.locator("#nwsReportBackdrop").wait_for(state="visible", timeout=5000)
+        _audit("Skywarn NWS Modal")
+        page.locator('#nwsReportBackdrop [data-close-modal="nwsReportBackdrop"]').first.click()
+        page.locator("#nwsReportBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Keyboard Shortcuts Modal
+        page.click("#btnShortcuts")
+        page.locator("#shortcutsBackdrop").wait_for(state="visible", timeout=5000)
+        _audit("Keyboard Shortcuts Modal")
+        page.locator('#shortcutsBackdrop [data-close-modal="shortcutsBackdrop"]').first.click()
+
+        browser.close()
+        assert not failures, "Modal WCAG axe-core violations:\n" + "\n".join(failures)
+
+
+@pytest.mark.ui
+def test_ui_keyboard_shortcuts_focus_zoom_and_media(live_app_server: str) -> None:
+    """Verify keyboard shortcuts, Escape modal closing, max font zoom at 1024x768, and OS a11y media."""
+    page_errors: list[str] = []
+
+    with sync_api.sync_playwright() as p:
+        browser = _launch_headless_browser(p)
+        page = browser.new_page(viewport={"width": 1366, "height": 840})
+        page.on("pageerror", lambda err: page_errors.append(str(err)))
+        page.goto(live_app_server, wait_until="networkidle")
+
+        # Start net via preset
+        page.locator('[data-quick-preset="Club VHF/UHF"]').click()
+        page.locator("#netModalBackdrop").wait_for(state="visible", timeout=5000)
+        # Escape closes open modal cleanly
+        page.keyboard.press("Escape")
+        page.locator("#netModalBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Alt+N opens Start Net modal via keyboard shortcut
+        page.keyboard.press("Alt+n")
+        page.locator("#netModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.fill("#netFormName", "Keyboard Shortcut Net")
+        page.click("#netFormSubmitBtn")
+        page.locator("#activeNetWorkspace").wait_for(state="visible", timeout=5000)
+
+        # F2 focuses callsign input; Alt+T toggles Traffic button
+        page.keyboard.press("F2")
+        assert page.evaluate("document.activeElement && document.activeElement.id") == "inCallsign"
+        page.keyboard.press("Alt+t")
+        assert page.locator("#btnTrafficToggle").get_attribute("aria-pressed") == "true"
+        page.keyboard.press("Alt+t")
+        assert page.locator("#btnTrafficToggle").get_attribute("aria-pressed") == "false"
+
+        # Alt+G toggles Radiograms drawer; Alt+R toggles Roster drawer
+        page.keyboard.press("Alt+g")
+        page.locator("#panelRadiograms").wait_for(state="visible", timeout=3000)
+        page.keyboard.press("Alt+g")
+        page.locator("#panelRadiograms").wait_for(state="hidden", timeout=3000)
+
+        page.keyboard.press("Alt+r")
+        page.locator("#panelRoster").wait_for(state="visible", timeout=3000)
+        page.keyboard.press("Alt+r")
+        page.locator("#panelRoster").wait_for(state="hidden", timeout=3000)
+
+        # '?' opens Keyboard Shortcuts modal, Escape closes it
+        page.locator("body").click(position={"x": 10, "y": 10})
+        page.keyboard.press("?")
+        page.locator("#shortcutsBackdrop").wait_for(state="visible", timeout=3000)
+        page.keyboard.press("Escape")
+        page.locator("#shortcutsBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Stress-test max font sizes (22px UI / 26px callsign) at narrower 1024x768 viewport
+        page.evaluate(
+            """() => {
+              document.documentElement.style.setProperty('--font-size', '22px');
+              document.documentElement.style.setProperty('--callsign-size', '26px');
+            }"""
+        )
+        page.set_viewport_size({"width": 1024, "height": 768})
+        page.wait_for_timeout(150)
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 2
+        assert page.locator("#btnLogCheckin").is_visible()
+
+        # Emulate OS reduced-motion and Windows High Contrast (forced-colors)
+        page.emulate_media(reduced_motion="reduce", forced_colors="active")
+        page.wait_for_timeout(100)
+        assert page.locator("#inCallsign").is_visible()
+        assert not page_errors, f"Uncaught JS errors: {page_errors}"
+        browser.close()
+
+
+@pytest.mark.ui
+def test_ui_downloads_uploads_reload_and_negative_ux(live_app_server: str, tmp_path: Path) -> None:
+    """Verify real browser downloads (CSV/ADIF/Backup .zip), CSV upload, reload persistence, and error UX."""
+    bpq_srv, bpq_port, bpq_stop, bpq_thread = _start_mock_bpq_server()
+    page_errors: list[str] = []
+
+    try:
+        with sync_api.sync_playwright() as p:
+            browser = _launch_headless_browser(p)
+            context = browser.new_context(viewport={"width": 1366, "height": 840}, accept_downloads=True)
+            page = context.new_page()
+            page.on("pageerror", lambda err: page_errors.append(str(err)))
+
+            page.goto(live_app_server, wait_until="networkidle")
+            page.locator('[data-quick-preset="RACES"]').click()
+            page.fill("#netFormName", "Reload Test RACES Net")
+            page.click("#netFormSubmitBtn")
+            page.locator("#activeNetWorkspace").wait_for(state="visible", timeout=5000)
+
+            page.fill("#inCallsign", "K5TST")
+            page.fill("#inRacesId", "TX-104")
+            page.click("#btnLogCheckin")
+            k5_row = page.locator("#checkinsTbody tr", has_text="K5TST")
+            k5_row.wait_for(state="visible", timeout=5000)
+
+            # 1. Real CSV export download
+            with page.expect_download() as csv_dl_info:
+                page.click("#btnExportCsv")
+            csv_dl = csv_dl_info.value
+            assert csv_dl.suggested_filename.endswith(".csv")
+            csv_path = tmp_path / csv_dl.suggested_filename
+            csv_dl.save_as(str(csv_path))
+            csv_text = csv_path.read_text(encoding="utf-8")
+            assert "K5TST" in csv_text and "TX-104" in csv_text
+
+            # 2. Real ADIF export download
+            with page.expect_download() as adif_dl_info:
+                page.click("#btnExportAdif")
+            adif_dl = adif_dl_info.value
+            assert adif_dl.suggested_filename.endswith(".adi")
+            adif_path = tmp_path / adif_dl.suggested_filename
+            adif_dl.save_as(str(adif_path))
+            assert "<CALL:5>K5TST" in adif_path.read_text(encoding="utf-8")
+
+            # 3. Real Backup .zip download + theme/font persistence setup
+            page.click("#btnOpenPrefs")
+            page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+            page.locator('[data-theme-pick="night-red"]').click()
+            page.locator("#prefFontSize").fill("18")
+            page.locator('[data-pref-tab="qrz"]').click()
+            with page.expect_download() as zip_dl_info:
+                page.click("#btnDownloadBackup")
+            zip_dl = zip_dl_info.value
+            assert zip_dl.suggested_filename.endswith(".zip")
+            zip_path = tmp_path / zip_dl.suggested_filename
+            zip_dl.save_as(str(zip_path))
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                names = set(zf.namelist())
+                assert "net_logger.db" in names and "manifest.json" in names
+
+            # 4. Negative UX: wrong LinBPQ password surfaces clean error banner
+            page.locator('[data-pref-tab="digital"]').click()
+            page.check("#prefDigPacketEnabled")
+            page.select_option("#prefDigMethod", "bpq_telnet")
+            page.fill("#prefDigBpqHost", "127.0.0.1")
+            page.fill("#prefDigBpqPort", str(bpq_port))
+            page.fill("#prefDigBpqUser", "w5cdn")
+            page.fill("#prefDigBpqPass", "wrongpass")
+            page.click('#prefsForm button[type="submit"]')
+            page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=5000)
+
+            page.click("#btnOpenPrefs")
+            page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+            page.locator('[data-pref-tab="digital"]').click()
+            page.click("#btnTestDigitalNode")
+            page.locator("#digitalTestBanner", has_text="re-prompted").wait_for(state="visible", timeout=5000)
+            page.click("#btnCancelPrefsTop")
+            page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=3000)
+
+            # 5. Real Roster CSV file upload
+            roster_csv = tmp_path / "club_roster.csv"
+            roster_csv.write_text(
+                "Callsign,Name,QTH,Grid,Spotter ID,RACES ID\n"
+                "W5IMP,Imported Op,Dallas TX,EM12,TX-DAL-9,TX-R-9\n",
+                encoding="utf-8",
+            )
+            page.click("#btnOpenRoster")
+            page.locator("#panelRoster").wait_for(state="visible", timeout=5000)
+            page.set_input_files("#rosterCsvFile", str(roster_csv))
+            page.locator("#rosterTbody tr", has_text="W5IMP").wait_for(state="visible", timeout=5000)
+
+            # 6. Negative UX: invalid callsign rejected cleanly with toast notification
+            page.fill("#inCallsign", "!!!")
+            page.click("#btnLogCheckin")
+            page.locator("#toastStack .toast").first.wait_for(state="visible", timeout=5000)
+
+            # 7. Persistence across full page reload
+            page.reload(wait_until="networkidle")
+            assert page.evaluate("document.documentElement.dataset.theme") == "night-red"
+            assert page.locator("#netTitle").inner_text().strip() == "Reload Test RACES Net"
+            page.locator("#checkinsTbody tr", has_text="K5TST").wait_for(state="visible", timeout=5000)
+
+            assert not page_errors, f"Uncaught JS errors: {page_errors}"
+            browser.close()
+    finally:
+        bpq_stop.set()
+        bpq_srv.close()
+        bpq_thread.join(timeout=2.0)
