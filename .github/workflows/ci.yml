@@ -270,9 +270,93 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  ui-e2e:
+    name: Playwright UI & WCAG (ubuntu-latest / Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install UI E2E dependencies
+        run: uv sync --python 3.12 --group dev --group ui
+
+      - name: Install Playwright Chromium browser
+        run: uv run --python 3.12 playwright install --with-deps chromium
+
+      - name: Run Playwright E2E & axe-core WCAG accessibility suite
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run --python 3.12 pytest tests/test_ui_e2e.py --no-cov -v -ra --junitxml=ui-e2e-results.xml 2>&1 | tee ui-e2e-output.log
+
+      - name: Publish Playwright E2E & WCAG output to Job Summary
+        if: always()
+        shell: bash
+        run: |
+          uv run --python 3.12 python - <<'PY'
+          import json, os, pathlib, xml.etree.ElementTree as ET
+
+          metrics = {"tests": 0, "passed": 0, "failures": 0, "errors": 0, "skipped": 0}
+          junit = pathlib.Path("ui-e2e-results.xml")
+          if junit.is_file():
+              root = ET.parse(junit).getroot()
+              suite = root.find("testsuite") if root.tag == "testsuites" else root
+              if suite is not None:
+                  t = int(suite.attrib.get("tests", 0))
+                  f = int(suite.attrib.get("failures", 0))
+                  e = int(suite.attrib.get("errors", 0))
+                  s = int(suite.attrib.get("skipped", 0))
+                  metrics.update({"tests": t, "failures": f, "errors": e, "skipped": s, "passed": max(0, t - f - e - s)})
+          pathlib.Path("ui-e2e-metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if not summary_path:
+              raise SystemExit(0)
+
+          lines = [
+              "## Playwright UI E2E & axe-core WCAG Suite",
+              "",
+              f"**Results:** {metrics['passed']} passed, {metrics['failures']} failed, {metrics['errors']} errors, {metrics['skipped']} skipped (total: {metrics['tests']})",
+              "",
+          ]
+          log = pathlib.Path("ui-e2e-output.log")
+          if log.is_file():
+              body = log.read_text(encoding="utf-8", errors="replace").strip()
+              lines.extend([
+                  "<details open>",
+                  "<summary>Full Playwright E2E & WCAG console output</summary>",
+                  "",
+                  "```text",
+                  body[:80000],
+                  "```",
+                  "</details>",
+                  "",
+              ])
+          with open(summary_path, "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines))
+          PY
+
+      - name: Upload Playwright UI metrics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-e2e-metrics
+          path: ui-e2e-metrics.json
+          retention-days: 1
+          if-no-files-found: ignore
+
   all-checks-passed:
     name: Required PR Merge Gate
-    needs: [test, security]
+    needs: [test, security, ui-e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -292,6 +376,14 @@ jobs:
           name: security-metrics
           path: metrics
 
+      - name: Download Playwright UI metrics
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-e2e-metrics
+          path: metrics
+
       - name: Post PR check summary & handle opt-in auto-merge
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
@@ -299,6 +391,7 @@ jobs:
         env:
           TEST_RESULT: ${{ needs.test.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
+          UI_E2E_RESULT: ${{ needs.ui-e2e.result }}
         with:
           script: |
             const fs = require('fs');
@@ -319,9 +412,11 @@ jobs:
 
             const testRes = process.env.TEST_RESULT;
             const secRes = process.env.SECURITY_RESULT;
-            const allPassed = testRes === 'success' && secRes === 'success';
+            const uiRes = process.env.UI_E2E_RESULT;
+            const allPassed = testRes === 'success' && secRes === 'success' && uiRes === 'success';
             const ciMetrics = readJson('ci-metrics.json');
             const secMetrics = readJson('security-metrics.json');
+            const uiMetrics = readJson('ui-e2e-metrics.json');
 
             const { owner, repo } = context.repo;
             const prNumber = context.payload.pull_request.number;
@@ -388,6 +483,10 @@ jobs:
               }
             }
 
+            const uiDetail = (uiMetrics && uiMetrics.tests > 0)
+              ? `**${uiMetrics.passed} passed**, ${uiMetrics.failures} failed, ${uiMetrics.skipped} skipped (Chromium + axe-core WCAG 2.1 AA)`
+              : 'Chromium headless E2E + axe-core WCAG 2.1 AA';
+
             const ruffLine = secMetrics ? icon(secMetrics.ruff) : icon(secRes);
             const banditLine = secMetrics ? icon(secMetrics.bandit) : icon(secRes);
             const auditLine = secMetrics ? icon(secMetrics.pip_audit) : icon(secRes);
@@ -407,6 +506,7 @@ jobs:
               '| :--- | :--- | :--- |',
               `| **Pytest Suite** | ${icon(testRes)} | ${testDetail} |`,
               `| **Test Coverage** | ${icon(testRes)} | ${covDetail} |`,
+              `| **Playwright UI & WCAG** | ${icon(uiRes)} | ${uiDetail} |`,
               `| **Ruff Lint** | ${ruffLine} | Static lint & bug checks |`,
               `| **Bandit SAST** | ${banditLine} | Python security scan (Medium/High) |`,
               `| **pip-audit** | ${auditLine} | Dependency CVE audit |`,
@@ -455,7 +555,11 @@ jobs:
             echo "Security & lint checks failed (${{ needs.security.result }}). Blocking merge."
             exit 1
           fi
-          echo "All cross-platform pytest tests, security scans, UI checks, and coverage gates passed."
+          if [ "${{ needs.ui-e2e.result }}" != "success" ]; then
+            echo "Playwright UI & WCAG suite failed (${{ needs.ui-e2e.result }}). Blocking merge."
+            exit 1
+          fi
+          echo "All cross-platform pytest tests, Playwright UI & WCAG tests, security scans, and coverage gates passed."
 
   build-standalone:
     name: Build Standalone (${{ matrix.os }})
