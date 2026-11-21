@@ -46,8 +46,8 @@
       --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5);
       --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6);
       --accent-blue: #38bdf8;
-      --accent-blue-strong: #0284c7;
-      --accent-blue-hover: #0369a1;
+      --accent-blue-strong: #0369a1;
+      --accent-blue-hover: #075985;
       --accent-blue-bg: rgba(56, 189, 248, 0.14);
       --accent-blue-glow: rgba(56, 189, 248, 0.35);
       --accent-emerald: #10b981;
@@ -2050,7 +2050,7 @@
       border-bottom: 1px solid var(--border);
       background: var(--bg-chrome);
     }
-    .modal-header h3 { margin: 0; font-size: 1.06em; font-weight: 800; }
+    .modal-header h2, .modal-header h3 { margin: 0; font-size: 1.06em; font-weight: 800; }
 
     .modal-body {
       flex: 1;
@@ -2168,7 +2168,7 @@
     .theme-swatches { display: flex; gap: 4px; }
     .theme-swatch-dot { width: 17px; height: 17px; border-radius: 4px; border: 1px solid rgba(128,128,128,0.35); }
     .theme-card-title { font-weight: 700; font-size: 0.88em; color: var(--text-primary); }
-    .theme-card-desc { font-size: 0.76em; color: var(--text-muted); }
+    .theme-card-desc { font-size: 0.76em; color: var(--text-secondary); }
 
     .font-preview-box {
       padding: 11px 14px;
@@ -3066,7 +3066,7 @@
             </section>
 
             <!-- Footer Telemetry Bar -->
-            <footer class="shortcut-footer" id="shortcutFooter">
+            <footer class="shortcut-footer" id="shortcutFooter" tabindex="0">
               <div class="shortcut-hints">
                 <span><span class="kbd">F2</span> Callsign</span>
                 <span><span class="kbd">Ctrl+↵</span> Log</span>
@@ -3142,7 +3142,7 @@
                   <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
                     <button type="button" class="filter-btn active" data-rg-scope="net" id="btnRgScopeNet">Net</button>
                     <button type="button" class="filter-btn" data-rg-scope="all" id="btnRgScopeAll">All</button>
-                    <select id="rgFilterStatus" class="select" style="width:110px; padding:3px 6px; font-size:0.84em;">
+                    <select id="rgFilterStatus" aria-label="Filter radiograms by status" class="select" style="width:110px; padding:3px 6px; font-size:0.84em;">
                       <option value="">All Status</option>
                       <option value="LISTED">Listed</option>
                       <option value="ASSIGNED">Assigned</option>
@@ -3301,7 +3301,7 @@
   <div class="modal-backdrop hidden" id="panelsModalBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="panelsModalTitle">
       <div class="modal-header">
-        <h3 id="panelsModalTitle">Workspace Panels &amp; Layout</h3>
+        <h2 id="panelsModalTitle">Workspace Panels &amp; Layout</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="panelsModalBackdrop">✕</button>
       </div>
       <div class="modal-body">
@@ -3412,15 +3412,15 @@
   <div class="modal-backdrop hidden" id="prefsModalBackdrop">
     <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="prefsModalTitle">
       <div class="modal-header">
-        <h3 id="prefsModalTitle">Preferences</h3>
+        <h2 id="prefsModalTitle">Preferences</h2>
         <button class="btn btn-ghost btn-sm" id="btnCancelPrefsTop">✕</button>
       </div>
       <div class="tabs-bar" role="tablist">
-        <button type="button" class="tab-btn active" data-pref-tab="appearance">Appearance &amp; Fonts</button>
-        <button type="button" class="tab-btn" data-pref-tab="qrz">Operator, QRZ, Skywarn &amp; Folders</button>
-        <button type="button" class="tab-btn" data-pref-tab="netdefaults">Net Defaults</button>
-        <button type="button" class="tab-btn" data-pref-tab="digital">Packet / Winlink</button>
-        <button type="button" class="tab-btn" data-pref-tab="script">NCS Scripts</button>
+        <button type="button" role="tab" class="tab-btn active" data-pref-tab="appearance">Appearance &amp; Fonts</button>
+        <button type="button" role="tab" class="tab-btn" data-pref-tab="qrz">Operator, QRZ, Skywarn &amp; Folders</button>
+        <button type="button" role="tab" class="tab-btn" data-pref-tab="netdefaults">Net Defaults</button>
+        <button type="button" role="tab" class="tab-btn" data-pref-tab="digital">Packet / Winlink</button>
+        <button type="button" role="tab" class="tab-btn" data-pref-tab="script">NCS Scripts</button>
       </div>
       <form id="prefsForm">
         <div class="modal-body">
@@ -3960,7 +3960,7 @@
   <div class="modal-backdrop hidden" id="openNetWarnBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="openNetWarnTitle">
       <div class="modal-header">
-        <h3 id="openNetWarnTitle" style="color:var(--accent-amber-text);">⚠ Net Session Already In Progress</h3>
+        <h2 id="openNetWarnTitle" style="color:var(--accent-amber-text);">⚠ Net Session Already In Progress</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="openNetWarnBackdrop">✕</button>
       </div>
       <div class="modal-body">
@@ -3983,7 +3983,7 @@
   <div class="modal-backdrop hidden" id="netModalBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="netModalTitle">
       <div class="modal-header">
-        <h3 id="netModalTitle">Start New Net</h3>
+        <h2 id="netModalTitle">Start New Net</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="netModalBackdrop">✕</button>
       </div>
       <form id="netForm">
@@ -4074,7 +4074,7 @@
   <div class="modal-backdrop hidden" id="editCheckinBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editCheckinTitle">
       <div class="modal-header">
-        <h3 id="editCheckinTitle">Edit Check-In</h3>
+        <h2 id="editCheckinTitle">Edit Check-In</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="editCheckinBackdrop">✕</button>
       </div>
       <form id="editCheckinForm">
@@ -4173,7 +4173,7 @@
     <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="netReportModalTitle">
       <div class="modal-header">
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0;">
-          <h3 id="netReportModalTitle">Net Report</h3>
+          <h2 id="netReportModalTitle">Net Report</h2>
           <span class="pill pill-type" id="reportTypePill"></span>
           <span class="net-state-badge open" id="reportStatusPill">OPEN</span>
         </div>
@@ -4228,7 +4228,7 @@
   <div class="modal-backdrop hidden" id="nwsReportBackdrop">
     <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="nwsReportTitle">
       <div class="modal-header">
-        <h3 id="nwsReportTitle">NWS County Weather Report (Skywarn)</h3>
+        <h2 id="nwsReportTitle">NWS County Weather Report (Skywarn)</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="nwsReportBackdrop">✕</button>
       </div>
       <div class="modal-body">
@@ -4265,7 +4265,7 @@
   <div class="modal-backdrop hidden" id="digitalSendBackdrop">
     <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="digitalSendTitle">
       <div class="modal-header">
-        <h3 id="digitalSendTitle">BBS / Mail Dispatch</h3>
+        <h2 id="digitalSendTitle">BBS / Mail Dispatch</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="digitalSendBackdrop">✕</button>
       </div>
       <div class="modal-body">
@@ -4341,7 +4341,7 @@
   <div class="modal-backdrop hidden" id="ncsHandoffBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ncsHandoffTitle">
       <div class="modal-header">
-        <h3 id="ncsHandoffTitle">Net Control Station (NCS) Handoff</h3>
+        <h2 id="ncsHandoffTitle">Net Control Station (NCS) Handoff</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="ncsHandoffBackdrop">✕</button>
       </div>
       <form id="ncsHandoffForm">
@@ -4370,7 +4370,7 @@
   <div class="modal-backdrop hidden" id="shortcutsBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
       <div class="modal-header">
-        <h3 id="shortcutsTitle">Keyboard Shortcuts</h3>
+        <h2 id="shortcutsTitle">Keyboard Shortcuts</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="shortcutsBackdrop">✕</button>
       </div>
       <div class="modal-body">
@@ -4410,7 +4410,7 @@
   <div class="modal-backdrop hidden" id="quickNoteBackdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="quickNoteTitle">
       <div class="modal-header">
-        <h3 id="quickNoteTitle">Station Notes &amp; Weather Report</h3>
+        <h2 id="quickNoteTitle">Station Notes &amp; Weather Report</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="quickNoteBackdrop">✕</button>
       </div>
       <form id="quickNoteForm">
@@ -4451,7 +4451,7 @@
   <div class="modal-backdrop hidden" id="radiogramEditorBackdrop">
     <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="rgModalTitle">
       <div class="modal-header">
-        <h3 id="rgModalTitle">New ARRL Radiogram</h3>
+        <h2 id="rgModalTitle">New ARRL Radiogram</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="radiogramEditorBackdrop">✕</button>
       </div>
       <form id="radiogramForm">
@@ -4535,12 +4535,12 @@
           </div>
 
           <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-            <span style="font-size:0.78em; font-weight:700; text-transform:uppercase; color:var(--accent-blue); letter-spacing:0.06em;">
+            <label for="rgMessageText" style="font-size:0.78em; font-weight:700; text-transform:uppercase; color:var(--accent-blue); letter-spacing:0.06em;">
               3. Message Text (BT ... BT) — Check: <span class="pill pill-rg mono" id="rgCheckPreview">0</span>
-            </span>
+            </label>
             <div style="display:flex; gap:6px; align-items:center;">
               <button type="button" class="btn btn-xs" id="btnRgInsertX" title="Insert X (period separator)">+ X (Period)</button>
-              <select id="rgArlPicker" class="select" style="width:240px; padding:3px 7px; font-size:0.84em;">
+              <select id="rgArlPicker" aria-label="Insert ARL numbered text" class="select" style="width:240px; padding:3px 7px; font-size:0.84em;">
                 <option value="">Insert ARL Numbered Text...</option>
                 <option value="ARL ONE">ARL ONE — Everyone safe here</option>
                 <option value="ARL TWO">ARL TWO — Coming home as soon as possible</option>
@@ -4629,7 +4629,7 @@
   <div class="modal-backdrop hidden" id="monthlyReportBackdrop">
     <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="monthlyReportTitle">
       <div class="modal-header">
-        <h3 id="monthlyReportTitle">Monthly Net Report (ARRL Radiogram)</h3>
+        <h2 id="monthlyReportTitle">Monthly Net Report (ARRL Radiogram)</h2>
         <button class="btn btn-ghost btn-sm" data-close-modal="monthlyReportBackdrop">✕</button>
       </div>
       <form id="monthlyReportForm">
