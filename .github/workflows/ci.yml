@@ -1,0 +1,374 @@
+name: CI & Standalone Releases
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }} --group dev
+
+      - name: Syntax check Python modules
+        run: uv run --python ${{ matrix.python-version }} python -m py_compile app.py desktop.py build_standalone.py
+
+      - name: Run full pytest suite (API, security, UI integrity, code quality & >=90% coverage)
+        run: uv run --python ${{ matrix.python-version }} pytest -v --junitxml=pytest-results.xml --cov-report=json:coverage.json
+
+      - name: Export pytest & coverage metrics
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv run --python 3.12 python -c "
+          import json, pathlib, xml.etree.ElementTree as ET
+          metrics = {'tests': 0, 'passed': 0, 'failures': 0, 'errors': 0, 'skipped': 0, 'coverage_total': None, 'files': {}}
+          junit = pathlib.Path('pytest-results.xml')
+          if junit.is_file():
+              root = ET.parse(junit).getroot()
+              suite = root.find('testsuite') if root.tag == 'testsuites' else root
+              if suite is not None:
+                  t = int(suite.attrib.get('tests', 0))
+                  f = int(suite.attrib.get('failures', 0))
+                  e = int(suite.attrib.get('errors', 0))
+                  s = int(suite.attrib.get('skipped', 0))
+                  metrics.update({'tests': t, 'failures': f, 'errors': e, 'skipped': s, 'passed': max(0, t - f - e - s)})
+          cov = pathlib.Path('coverage.json')
+          if cov.is_file():
+              data = json.loads(cov.read_text(encoding='utf-8'))
+              metrics['coverage_total'] = round(float(data.get('totals', {}).get('percent_covered', 0.0)), 2)
+              for fname, fdata in data.get('files', {}).items():
+                  metrics['files'][fname] = round(float(fdata.get('summary', {}).get('percent_covered', 0.0)), 1)
+          pathlib.Path('ci-metrics.json').write_text(json.dumps(metrics, indent=2), encoding='utf-8')
+          "
+
+      - name: Upload pytest & coverage metrics
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-metrics
+          path: ci-metrics.json
+          retention-days: 1
+          if-no-files-found: ignore
+
+  security:
+    name: Security & Static Analysis (Ruff, Bandit, pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install runtime dependencies
+        run: uv sync --python 3.12
+
+      - name: Lint & bug-check with Ruff
+        id: ruff
+        run: uvx ruff check app.py desktop.py build_standalone.py tests
+
+      - name: Static security scan with Bandit (Medium/High severity)
+        id: bandit
+        if: always()
+        run: uvx bandit -r app.py desktop.py build_standalone.py -ll
+
+      - name: Dependency vulnerability audit (pip-audit)
+        id: pip_audit
+        if: always()
+        run: uv run --python 3.12 --with pip-audit pip-audit --strict --skip-editable
+
+      - name: Export security tool statuses
+        if: always()
+        env:
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          uv run --python 3.12 python -c "
+          import json, os, pathlib
+          data = {
+              'ruff': os.environ.get('RUFF_OUTCOME', 'skipped'),
+              'bandit': os.environ.get('BANDIT_OUTCOME', 'skipped'),
+              'pip_audit': os.environ.get('AUDIT_OUTCOME', 'skipped'),
+          }
+          pathlib.Path('security-metrics.json').write_text(json.dumps(data, indent=2), encoding='utf-8')
+          "
+
+      - name: Upload security tool statuses
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-metrics
+          path: security-metrics.json
+          retention-days: 1
+          if-no-files-found: ignore
+
+  all-checks-passed:
+    name: Required PR Merge Gate
+    needs: [test, security]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download pytest metrics
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-metrics
+          path: metrics
+
+      - name: Download security metrics
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: security-metrics
+          path: metrics
+
+      - name: Post PR check summary & handle opt-in auto-merge
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const readJson = (file) => {
+              const p = path.join('metrics', file);
+              if (!fs.existsSync(p)) return null;
+              try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+            };
+
+            const icon = (status) => {
+              if (status === 'success') return '✅ Passed';
+              if (status === 'failure') return '❌ Failed';
+              if (status === 'cancelled') return '⚠️ Cancelled';
+              return `⏭️ ${status || 'Skipped'}`;
+            };
+
+            const testRes = process.env.TEST_RESULT;
+            const secRes = process.env.SECURITY_RESULT;
+            const allPassed = testRes === 'success' && secRes === 'success';
+            const ciMetrics = readJson('ci-metrics.json');
+            const secMetrics = readJson('security-metrics.json');
+
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+            const pr = context.payload.pull_request;
+            const isSameRepo = Boolean(pr.head && pr.head.repo && pr.head.repo.full_name === `${owner}/${repo}`);
+            const author = (pr.user && pr.user.login) || '';
+            const isDependabot = author === 'dependabot[bot]';
+            const isTrustedAuthor = isSameRepo && (author === owner || isDependabot);
+            const labels = (pr.labels || []).map((l) => (l.name || '').toLowerCase());
+            const wantsAutoMerge = labels.includes('auto-merge') || isDependabot;
+
+            let autoApproveNote = 'Manual review (default)';
+            let autoMergeNote = allPassed
+              ? 'Ready — click **Enable auto-merge** below, or add the `auto-merge` label.'
+              : 'Blocked until all required checks pass.';
+
+            if (allPassed && wantsAutoMerge) {
+              if (!isTrustedAuthor) {
+                autoMergeNote = 'Skipped — auto-merge is restricted to same-repo PRs from the repo owner or Dependabot.';
+              } else {
+                // Attempt bot approval only when explicitly opted-in (requires repo Actions approval setting)
+                try {
+                  await github.rest.pulls.createReview({
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                    event: 'APPROVE',
+                    body: 'Automated CI approval: all cross-platform pytest tests, coverage (>=90%), Ruff, Bandit, and pip-audit checks passed.',
+                  });
+                  autoApproveNote = '✅ Approved by `github-actions[bot]`';
+                } catch {
+                  autoApproveNote = 'ℹ️ Skipped (enable *Allow GitHub Actions to create and approve pull requests* in Settings → Actions if desired)';
+                }
+
+                // Attempt to enable GitHub native auto-merge (merge commit)
+                try {
+                  await github.graphql(
+                    `mutation($prId: ID!) {
+                      enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: MERGE }) {
+                        pullRequest { number }
+                      }
+                    }`,
+                    { prId: pr.node_id }
+                  );
+                  autoMergeNote = '✅ **Auto-merge enabled** (merge commit once all required checks including CodeQL complete).';
+                } catch (err) {
+                  const msg = (err && err.message) ? err.message : 'Enable "Allow auto-merge" in repo Settings → General';
+                  autoMergeNote = `ℹ️ Could not enable auto-merge automatically (${msg}). You can merge manually below.`;
+                }
+              }
+            }
+
+            let testDetail = 'Ubuntu & Windows × Python 3.11 & 3.12';
+            let covDetail = '>= 90% required';
+            if (ciMetrics && ciMetrics.tests > 0) {
+              testDetail = `**${ciMetrics.passed} passed**, ${ciMetrics.failures} failed, ${ciMetrics.errors} errors, ${ciMetrics.skipped} skipped (Ubuntu & Windows × Py 3.11/3.12)`;
+              if (ciMetrics.coverage_total !== null) {
+                const appCov = ciMetrics.files && ciMetrics.files['app.py'] !== undefined ? ` (\`app.py\`: ${ciMetrics.files['app.py']}%, \`desktop.py\`: ${ciMetrics.files['desktop.py'] ?? 'n/a'}%)` : '';
+                covDetail = `**${ciMetrics.coverage_total}%**${appCov} — gate: >= 90%`;
+              }
+            }
+
+            const ruffLine = secMetrics ? icon(secMetrics.ruff) : icon(secRes);
+            const banditLine = secMetrics ? icon(secMetrics.bandit) : icon(secRes);
+            const auditLine = secMetrics ? icon(secMetrics.pip_audit) : icon(secRes);
+            const shortSha = (pr.head && pr.head.sha ? pr.head.sha : context.sha).slice(0, 7);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const marker = '<!-- w5cdn-ci-summary -->';
+            const header = allPassed
+              ? '### ✅ W5CDN Net Logger — CI & Security Gate Passed'
+              : '### ❌ W5CDN Net Logger — CI & Security Gate Failed';
+
+            const body = [
+              marker,
+              header,
+              '',
+              '| Check | Status | Details |',
+              '| :--- | :--- | :--- |',
+              `| **Pytest Suite** | ${icon(testRes)} | ${testDetail} |`,
+              `| **Test Coverage** | ${icon(testRes)} | ${covDetail} |`,
+              `| **Ruff Lint** | ${ruffLine} | Static lint & bug checks |`,
+              `| **Bandit SAST** | ${banditLine} | Python security scan (Medium/High) |`,
+              `| **pip-audit** | ${auditLine} | Dependency CVE audit |`,
+              '| **CodeQL** | 🔍 Separate workflow | Python & JavaScript SAST (see Checks tab) |',
+              '',
+              `**Auto-Approval:** ${autoApproveNote}  `,
+              `**Auto-Merge:** ${autoMergeNote}`,
+              '',
+              `_Commit \`${shortSha}\` • [View full CI run logs](${runUrl})_`,
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+      - name: Verify all test and security jobs succeeded
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Test matrix failed (${{ needs.test.result }}). Blocking merge."
+            exit 1
+          fi
+          if [ "${{ needs.security.result }}" != "success" ]; then
+            echo "Security & lint checks failed (${{ needs.security.result }}). Blocking merge."
+            exit 1
+          fi
+          echo "All cross-platform pytest tests, security scans, UI checks, and coverage gates passed."
+
+  build-standalone:
+    name: Build Standalone (${{ matrix.os }})
+    needs: [all-checks-passed]
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install runtime and packaging dependencies
+        run: uv sync --python 3.12 --group packaging
+
+      - name: Build standalone portable bundle
+        run: uv run --python 3.12 --group packaging python build_standalone.py
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-${{ matrix.os }}
+          path: release/W5CDN-Net-Logger-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-standalone]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download standalone artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-artifacts/W5CDN-Net-Logger-*.zip
