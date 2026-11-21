@@ -190,8 +190,28 @@ def live_app_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
             transport=httpx.MockTransport(mock_nws_handler)
         )
 
+    async def _mock_check_for_update(**kwargs):
+        return {
+            "online": True,
+            "repo": "edenhare/w5cdn-net-logger",
+            "install_mode": "git",
+            "current_version": kwargs.get("current_version", net_app.APP_VERSION),
+            "latest_version": kwargs.get("current_version", net_app.APP_VERSION),
+            "update_available": False,
+            "can_self_update": True,
+            "release_name": "",
+            "release_url": "https://github.com/edenhare/w5cdn-net-logger/releases",
+            "published_at": "",
+            "release_notes": "",
+            "asset_name": "",
+            "asset_url": "",
+            "checksum_url": "",
+            "message": f"W5CDN Net Logger {net_app.APP_VERSION} is up to date.",
+        }
+
     monkeypatch.setattr(net_app.lookup_service, "start", _mock_lookup_start)
     monkeypatch.setattr(net_app.nws_service, "start", _mock_nws_start)
+    monkeypatch.setattr(net_app.updater, "check_for_update", _mock_check_for_update)
 
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(net_app.app, host="127.0.0.1", port=port, log_level="warning"))

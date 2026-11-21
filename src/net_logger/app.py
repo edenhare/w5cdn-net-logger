@@ -28,6 +28,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from net_logger import updater
+
 APP_VERSION = "0.1.0"
 APP_TITLE = "W5CDN Net Logger"
 
@@ -3304,6 +3306,7 @@ async def get_config() -> dict[str, Any]:
         "operator_call": prefs["operator_call"],
         "qrz_configured": prefs["qrz_configured"],
         "version": APP_VERSION,
+        "install_mode": updater.detect_install_mode(BASE_DIR),
         "utc_now": utc_now_iso(),
         "preferences": prefs,
     }
@@ -6438,6 +6441,93 @@ async def restore_backup_archive(request: Request) -> dict[str, Any]:
             "operators": int(conn.execute("SELECT COUNT(*) FROM operators").fetchone()[0]),
         }
     return {"restored": True, "counts": counts, "radiogram_files": restored_files}
+
+
+# --- Self-Update (Git / Source & Standalone Bundles) ---
+
+
+def _has_open_net() -> bool:
+    with get_db() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM nets WHERE ended_at IS NULL").fetchone()
+        return bool(row and int(row[0]) > 0)
+
+
+@app.get("/api/update/check")
+async def check_app_update() -> dict[str, Any]:
+    """Check GitHub Releases for a newer version of W5CDN Net Logger (offline-safe)."""
+    info = await updater.check_for_update(current_version=APP_VERSION, data_dir=BASE_DIR)
+    info["has_open_net"] = _has_open_net()
+    return info
+
+
+@app.post("/api/update/apply")
+async def apply_app_update() -> dict[str, Any]:
+    """Apply an update for either a Git/source checkout or a standalone PyInstaller bundle."""
+    if _has_open_net():
+        raise HTTPException(
+            status_code=409,
+            detail="Close active net sessions before applying an application update.",
+        )
+
+    mode = updater.detect_install_mode(BASE_DIR)
+    if mode == "git":
+        try:
+            return updater.apply_git_update(BASE_DIR, get_db_path())
+        except updater.UpdateError as exc:
+            logger.warning("Git self-update rejected: %s", exc.code)
+            raise HTTPException(status_code=400, detail=updater.safe_error_message(exc)) from exc
+        except OSError as exc:
+            logger.warning("Git self-update filesystem error: %s", exc)
+            raise HTTPException(
+                status_code=500,
+                detail="A local filesystem error occurred while applying the Git update.",
+            ) from exc
+
+    if mode == "standalone":
+        info = await updater.check_for_update(current_version=APP_VERSION, data_dir=BASE_DIR)
+        if not info.get("online"):
+            raise HTTPException(status_code=503, detail="Could not reach GitHub Releases to download update.")
+        if not info.get("update_available"):
+            return {
+                "ok": True,
+                "mode": "standalone",
+                "restart_required": False,
+                "backup_created": False,
+                "message": f"W5CDN Net Logger {APP_VERSION} is already up to date.",
+            }
+        if not info.get("asset_url") or not info.get("checksum_url"):
+            raise HTTPException(
+                status_code=400,
+                detail="This GitHub Release does not contain a matching standalone bundle and SHA256SUMS.txt.",
+            )
+        try:
+            res = await updater.apply_standalone_update(
+                data_dir=BASE_DIR,
+                db_path=get_db_path(),
+                asset_name=str(info["asset_name"]),
+                asset_url=str(info["asset_url"]),
+                checksum_url=str(info["checksum_url"]),
+                current_version=APP_VERSION,
+            )
+        except updater.UpdateError as exc:
+            logger.warning("Standalone self-update rejected: %s", exc.code)
+            raise HTTPException(status_code=400, detail=updater.safe_error_message(exc)) from exc
+        except OSError as exc:
+            logger.warning("Standalone self-update filesystem error: %s", exc)
+            raise HTTPException(
+                status_code=500,
+                detail="A local filesystem error occurred while staging the standalone update.",
+            ) from exc
+        shutdown_manager.schedule()
+        return res
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "This copy was extracted from a source archive without Git. "
+            "Download the latest release from GitHub Releases or clone via Git to enable one-click updates."
+        ),
+    )
 
 
 def main() -> None:

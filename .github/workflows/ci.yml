@@ -367,8 +367,16 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
+      - name: Generate SHA256SUMS.txt for release integrity verification
+        run: |
+          cd release-artifacts
+          sha256sum W5CDN-Net-Logger-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          files: release-artifacts/W5CDN-Net-Logger-*.zip
+          files: |
+            release-artifacts/W5CDN-Net-Logger-*.zip
+            release-artifacts/SHA256SUMS.txt

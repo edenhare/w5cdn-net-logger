@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_FILES = [
     PROJECT_ROOT / "src" / "net_logger" / "app.py",
     PROJECT_ROOT / "src" / "net_logger" / "desktop.py",
+    PROJECT_ROOT / "src" / "net_logger" / "updater.py",
 ]
 
 
