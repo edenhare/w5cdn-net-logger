@@ -143,6 +143,7 @@ w5cdn-net-logger/
 │   ├── __init__.py
 │   ├── app.py                      # FastAPI backend & SQLite storage
 │   ├── desktop.py                  # Desktop / chromeless app-window wrapper
+│   ├── updater.py                  # Dual-mode Git & SHA-256 standalone self-updater
 │   └── static/
 │       ├── index.html              # Semantic HTML shell
 │       ├── styles.css              # All 9 themes & responsive layout CSS
@@ -153,3 +154,18 @@ w5cdn-net-logger/
 │   └── install_linux_desktop.sh    # Linux application menu shortcut installer
 └── tests/                          # pytest, security, UI integrity & Playwright E2E
 ```
+
+---
+
+## Self-Updating (Git & Standalone Installs)
+
+W5CDN Net Logger checks GitHub Releases silently on startup (offline-safe) and displays a subtle **↑ Update** badge when a newer `v*` release is available. You can also check or apply updates anytime in **Preferences → Operator, QRZ, Skywarn & Folders → Application Updates**.
+
+- **Safety First:** Updates never run silently in the background, refuse to apply while any net session is open (`409 Conflict`), and automatically save a WAL-safe `net_logger.pre_update.bak` SQLite snapshot first.
+- **Git / Source Installs:** Verifies you are on a clean `main`/`master` branch, fast-forwards via `git pull --ff-only`, and syncs Python dependencies (`uv sync` or `.venv` `pip`).
+- **Standalone Portable Bundles (`W5CDN-Net-Logger.exe` / Linux binary):** Downloads the matching release `.zip` and `SHA256SUMS.txt` strictly from official GitHub domains, verifies the SHA-256 digest before extracting, preserves `net_logger.db`, `.env`, `radiograms/`, and `outbox/`, and automatically swaps & relaunches the updated binary.
+
+### Windows Smart App Control & SmartScreen Notes
+
+- **Windows 11 Smart App Control (SAC = On):** Because the standalone PyInstaller `.exe` is currently unsigned, Windows 11 systems with Smart App Control strictly enforced will block unsigned `.exe` binaries (both initial downloads and self-updated `.exe` files). **Recommended workaround:** Install via Git + Python (`start.bat` / `uv run`), which runs the signed official `python.exe` interpreter and is unaffected by Smart App Control.
+- **Standard Windows Defender SmartScreen:** When downloading a standalone `.zip` via a web browser, Windows may show *"Windows protected your PC"* — click **More info → Run anyway** (or right-click the `.zip` → **Properties → Unblock** before extracting). Updates applied by the built-in self-updater are verified against `SHA256SUMS.txt` and do not add a browser Mark-of-the-Web tag.

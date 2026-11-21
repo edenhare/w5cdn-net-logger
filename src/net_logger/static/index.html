@@ -21,6 +21,7 @@
         </div>
         <span class="lookup-source-pill hidden" id="operatorCallBadge" title="Active Operator / Default NCS Callsign (click to edit)"></span>
         <span class="lookup-source-pill" id="lookupSourcePill" title="Click to configure QRZ XML credentials">CALLOOK</span>
+        <button type="button" class="btn btn-success btn-xs hidden" id="btnUpdateBanner" title="A newer version of W5CDN Net Logger is available — click to review and update">↑ Update</button>
       </div>
 
       <!-- Digital VFO Readout (clickable to edit active net frequency/mode) -->
@@ -988,6 +989,25 @@
                 <button type="button" class="btn btn-amber btn-sm" id="btnRestoreBackup">Restore Backup</button>
                 <input type="file" id="restoreBackupFile" accept=".zip,application/zip" class="hidden" />
               </div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:8px; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input);">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                <div>
+                  <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <span style="font-weight:700;">Application Updates</span>
+                    <span class="pill" id="updateVersionPill">v0.1.0</span>
+                    <span class="pill" id="updateModePill">CHECKING</span>
+                  </div>
+                  <div id="updateStatusText" style="font-size:0.82em; color:var(--text-secondary); margin-top:2px;">Check GitHub Releases for newer versions. Updates never run automatically during an open net.</div>
+                </div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                  <button type="button" class="btn btn-sm" id="btnCheckUpdate">Check for Updates</button>
+                  <button type="button" class="btn btn-success btn-sm hidden" id="btnApplyUpdate">Install Update</button>
+                  <a class="btn btn-sm hidden" id="updateReleaseLink" href="https://github.com/edenhare/w5cdn-net-logger/releases" target="_blank" rel="noopener noreferrer">Release Page</a>
+                </div>
+              </div>
+              <pre id="updateReleaseNotes" class="hidden" style="margin:0; padding:6px 8px; max-height:110px; overflow:auto; white-space:pre-wrap; font-size:0.78em; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-panel); color:var(--text-secondary);"></pre>
             </div>
           </div>
 

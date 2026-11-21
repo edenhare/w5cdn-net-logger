@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    name: Pytest (${{ matrix.os }} / Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -42,7 +42,7 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --group dev
 
       - name: Syntax check Python modules
-        run: uv run --python ${{ matrix.python-version }} python -m py_compile src/net_logger/app.py src/net_logger/desktop.py scripts/build_standalone.py
+        run: uv run --python ${{ matrix.python-version }} python -m py_compile src/net_logger/app.py src/net_logger/desktop.py src/net_logger/updater.py scripts/build_standalone.py scripts/generate_changelog.py
 
       - name: Run full pytest suite (API, security, UI integrity, code quality & >=90% coverage)
         run: uv run --python ${{ matrix.python-version }} pytest -v --junitxml=pytest-results.xml --cov-report=json:coverage.json
@@ -361,14 +361,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout full Git history for automatic changelog generation
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Download standalone artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
 
+      - name: Generate categorized Conventional Commits changelog
+        run: |
+          python3 scripts/generate_changelog.py \
+            --version "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --output release-artifacts/CHANGELOG.md
+          cat release-artifacts/CHANGELOG.md
+
+      - name: Generate SHA256SUMS.txt for release integrity verification
+        run: |
+          cd release-artifacts
+          sha256sum W5CDN-Net-Logger-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: release-artifacts/CHANGELOG.md
           generate_release_notes: true
-          files: release-artifacts/W5CDN-Net-Logger-*.zip
+          files: |
+            release-artifacts/W5CDN-Net-Logger-*.zip
+            release-artifacts/SHA256SUMS.txt
+            release-artifacts/CHANGELOG.md

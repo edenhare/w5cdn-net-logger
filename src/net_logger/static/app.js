@@ -173,6 +173,7 @@
         roster: [],
         rollCalled: new Map(),
         rollRoundByNet: new Map(),
+        updateInfo: null,
       };
 
       const $ = (id) => document.getElementById(id);
@@ -985,6 +986,7 @@
         $("prefRadiogramsDir").value = p.radiograms_dir || "";
         renderNetTypeDefaultsEditor(p.net_type_defaults);
         populateDigitalRoutingEditor(p.digital_routing);
+        renderUpdateStatus(state.updateInfo);
 
         try {
           await loadScripts();
@@ -3944,6 +3946,155 @@
       }
 
       // -----------------------------------------------------------------------
+      // Application Self-Update (Git / Source & Standalone Bundles)
+      // -----------------------------------------------------------------------
+      function renderUpdateStatus(info) {
+        const verEl = $("updateVersionPill");
+        const modeEl = $("updateModePill");
+        const statusEl = $("updateStatusText");
+        const linkEl = $("updateReleaseLink");
+        const notesEl = $("updateReleaseNotes");
+        const applyBtn = $("btnApplyUpdate");
+        const bannerBtn = $("btnUpdateBanner");
+        if (!verEl || !modeEl || !statusEl) return;
+
+        const curVer = info?.current_version || state.config?.version || "0.1.0";
+        const mode = info?.install_mode || state.config?.install_mode || "source";
+        const modeLabel = {
+          standalone: "STANDALONE",
+          git: "GIT CHECKOUT",
+          source: "SOURCE ARCHIVE",
+        }[mode] || mode.toUpperCase();
+
+        verEl.textContent = `v${curVer}`;
+        modeEl.textContent = modeLabel;
+
+        if (!info) {
+          statusEl.textContent = "Check GitHub Releases for newer versions. Updates never run automatically during an open net.";
+          applyBtn?.classList.add("hidden");
+          linkEl?.classList.add("hidden");
+          notesEl?.classList.add("hidden");
+          bannerBtn?.classList.add("hidden");
+          return;
+        }
+
+        const openNet = Boolean(info.has_open_net) || state.nets.some((n) => !n.ended_at);
+        let msg = info.message || "";
+        if (info.update_available && openNet) {
+          msg += " Close active net sessions before installing.";
+        }
+        statusEl.textContent = msg;
+
+        if (linkEl) {
+          const url = String(info.release_url || "");
+          if (url.startsWith("https://github.com/")) {
+            linkEl.href = url;
+            linkEl.classList.remove("hidden");
+          } else {
+            linkEl.classList.add("hidden");
+          }
+        }
+
+        if (notesEl) {
+          const notes = String(info.release_notes || "").trim();
+          if (info.update_available && notes) {
+            notesEl.textContent = notes;
+            notesEl.classList.remove("hidden");
+          } else {
+            notesEl.textContent = "";
+            notesEl.classList.add("hidden");
+          }
+        }
+
+        if (bannerBtn) {
+          if (info.update_available) {
+            bannerBtn.textContent = `↑ Update v${info.latest_version}`;
+            bannerBtn.classList.remove("hidden");
+          } else {
+            bannerBtn.classList.add("hidden");
+          }
+        }
+
+        if (applyBtn) {
+          if (info.update_available && info.can_self_update) {
+            applyBtn.classList.remove("hidden");
+            applyBtn.disabled = openNet;
+            applyBtn.textContent = mode === "standalone"
+              ? `Download & Install v${info.latest_version}`
+              : `Update to v${info.latest_version}`;
+          } else {
+            applyBtn.classList.add("hidden");
+          }
+        }
+      }
+
+      async function checkAppUpdates(silent = false) {
+        const btn = $("btnCheckUpdate");
+        if (btn && !silent) {
+          btn.disabled = true;
+          btn.textContent = "Checking...";
+        }
+        try {
+          const info = await api("/api/update/check");
+          state.updateInfo = info;
+          renderUpdateStatus(info);
+          if (!silent) {
+            toast(info.message || "Update check complete", info.update_available ? "success" : "info");
+          }
+        } catch (err) {
+          if (!silent) {
+            toast(`Update check failed: ${err.message}`, "error");
+          }
+        } finally {
+          if (btn && !silent) {
+            btn.disabled = false;
+            btn.textContent = "Check for Updates";
+          }
+        }
+      }
+
+      async function handleApplyUpdate() {
+        if (state.nets.some((n) => !n.ended_at)) {
+          toast("Close active net sessions before applying an application update.", "error");
+          return;
+        }
+        const info = state.updateInfo;
+        const mode = info?.install_mode || state.config?.install_mode || "source";
+        const targetVer = info?.latest_version ? `v${info.latest_version}` : "the latest version";
+        const promptText = mode === "standalone"
+          ? `Download, SHA-256 verify, and install ${targetVer}?\n\nA backup (net_logger.pre_update.bak) will be created automatically, and W5CDN Net Logger will close and relaunch.`
+          : `Fast-forward this Git checkout to ${targetVer} and sync dependencies?\n\nA backup (net_logger.pre_update.bak) will be created automatically before pulling.`;
+        if (!confirm(promptText)) return;
+
+        const applyBtn = $("btnApplyUpdate");
+        const checkBtn = $("btnCheckUpdate");
+        if (applyBtn) {
+          applyBtn.disabled = true;
+          applyBtn.textContent = mode === "standalone" ? "Downloading & Verifying..." : "Updating...";
+        }
+        if (checkBtn) checkBtn.disabled = true;
+
+        try {
+          const res = await api("/api/update/apply", { method: "POST" });
+          const statusEl = $("updateStatusText");
+          if (statusEl) statusEl.textContent = res.message || "Update applied.";
+          $("btnUpdateBanner")?.classList.add("hidden");
+          toast(res.message || "Update applied. Restart W5CDN Net Logger.", "success");
+          if (applyBtn) {
+            applyBtn.textContent = mode === "standalone" ? "Restarting..." : "Updated — Restart App";
+          }
+        } catch (err) {
+          toast(`Update failed: ${err.message}`, "error");
+          if (applyBtn) {
+            applyBtn.disabled = false;
+            renderUpdateStatus(state.updateInfo);
+          }
+        } finally {
+          if (checkBtn) checkBtn.disabled = false;
+        }
+      }
+
+      // -----------------------------------------------------------------------
       // Modal Helpers & Global Keyboard Navigation
       // -----------------------------------------------------------------------
       function closeAllModals() {
@@ -4561,6 +4712,9 @@
           e.target.value = "";
           if (file) restoreBackupArchiveFile(file);
         });
+        $("btnUpdateBanner").addEventListener("click", () => openPreferencesModal("qrz"));
+        $("btnCheckUpdate").addEventListener("click", () => checkAppUpdates(false));
+        $("btnApplyUpdate").addEventListener("click", handleApplyUpdate);
 
         // NWS Skywarn County Weather Report modal actions
         $("nwsLocationForm").addEventListener("submit", (e) => {
@@ -5224,6 +5378,8 @@
           if (state.prefs.panel_layout?.radiograms?.visible) await syncRadiogramsPanel();
           if (state.prefs.panel_layout?.ntsHistory?.visible) await loadNtsHistory();
           if (state.prefs.panel_layout?.roster?.visible) await loadRoster("");
+          renderUpdateStatus(null);
+          checkAppUpdates(true);
         } catch (err) {
           toast(`Startup error: ${err.message}`, "error");
         }
