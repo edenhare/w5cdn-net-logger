@@ -38,8 +38,10 @@ def _resolve_dirs() -> tuple[Path, Path]:
         data_dir = Path(sys.executable).resolve().parent
         bundle_dir = Path(getattr(sys, "_MEIPASS", str(data_dir)))
         return data_dir, bundle_dir
-    src_dir = Path(__file__).resolve().parent
-    return src_dir, src_dir
+    pkg_dir = Path(__file__).resolve().parent
+    # Source layout: <repo>/src/net_logger/app.py -> keep runtime data in <repo>, static assets in pkg_dir
+    data_dir = pkg_dir.parent.parent if pkg_dir.parent.name == "src" else pkg_dir
+    return data_dir, pkg_dir
 
 
 BASE_DIR, BUNDLE_DIR = _resolve_dirs()

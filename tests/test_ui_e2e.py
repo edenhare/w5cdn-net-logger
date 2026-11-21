@@ -21,7 +21,7 @@ import uvicorn
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-import app as net_app  # noqa: E402
+from net_logger import app as net_app  # noqa: E402
 
 
 def _free_port() -> int:

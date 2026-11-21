@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-import app as net_app
+from net_logger import app as net_app
 
 
 @pytest.fixture

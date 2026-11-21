@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-import app as net_app
+from net_logger import app as net_app
 
 
 # ---------------------------------------------------------------------------
@@ -159,10 +159,15 @@ def test_serve_index_and_missing_index(client: TestClient, monkeypatch: pytest.M
     assert "W5CDN Net Logger" in resp.text
     assert "nexus" not in resp.text.lower()
 
-    # Verify every $("...") DOM ID referenced in the client script exists in the HTML
+    # Verify external CSS & JS assets are linked, served, and every $("...") DOM ID exists in HTML
+    assert '/static/styles.css' in resp.text
+    assert '/static/app.js' in resp.text
+    css_resp = client.get("/static/styles.css")
+    js_resp = client.get("/static/app.js")
+    assert css_resp.status_code == 200
+    assert js_resp.status_code == 200
     html_ids = set(re.findall(r'\bid="([^"]+)"', resp.text))
-    script_part = resp.text.split("<script>", 1)[1].split("</script>", 1)[0]
-    js_refs = set(re.findall(r'\$\("([^"]+)"\)', script_part))
+    js_refs = set(re.findall(r'\$\("([^"]+)"\)', js_resp.text))
     assert not (js_refs - html_ids), f"Missing DOM IDs: {sorted(js_refs - html_ids)}"
     assert '/favicon.ico' in resp.text
     assert '/static/manifest.webmanifest' in resp.text
@@ -1294,10 +1299,11 @@ def test_panel_layout_preferences_and_sanitization(client: TestClient) -> None:
 def test_light_themes_and_open_net_warning_modal(client: TestClient) -> None:
     light_themes = ["daylight", "paper-warm", "eoc-light", "sky-breeze", "high-contrast"]
     html = client.get("/").text
+    css = client.get("/static/styles.css").text
     assert 'id="openNetWarnBackdrop"' in html
     assert 'id="btnWarnCloseAndNew"' in html
     for theme in light_themes:
-        assert f'data-theme="{theme}"' in html
+        assert f'data-theme="{theme}"' in css
         assert f'data-theme-pick="{theme}"' in html
         resp = client.put("/api/preferences", json={"theme": theme})
         assert resp.status_code == 200

@@ -79,12 +79,12 @@ Requires **Python 3.11+** (or [`uv`](https://docs.astral.sh/uv/)).
    > `pywebview` is automatically skipped on Linux so no GTK or WebKit2GTK system packages are needed.
 3. Launch the app:
    ```bash
-   chmod +x start.sh install_linux_desktop.sh
+   chmod +x start.sh scripts/install_linux_desktop.sh
    ./start.sh
    ```
 4. *(Optional)* Add **W5CDN Net Logger** to your Linux desktop application menu:
    ```bash
-   ./install_linux_desktop.sh
+   ./scripts/install_linux_desktop.sh
    ```
 
 ---
@@ -129,6 +129,27 @@ uv run pytest -v
 uv run --group dev --group ui pytest tests/test_ui_e2e.py --no-cov -v
 
 # Build a standalone portable .zip for your current OS (Windows or Linux)
-uv run --group packaging python build_standalone.py
+uv run --group packaging python scripts/build_standalone.py
 # Output: release/W5CDN-Net-Logger-<os>-<arch>.zip
+```
+
+## Project Layout
+
+```text
+w5cdn-net-logger/
+├── start.bat                       # Windows double-click launcher
+├── start.sh                        # Linux launcher (--app-window)
+├── src/net_logger/
+│   ├── __init__.py
+│   ├── app.py                      # FastAPI backend & SQLite storage
+│   ├── desktop.py                  # Desktop / chromeless app-window wrapper
+│   └── static/
+│       ├── index.html              # Semantic HTML shell
+│       ├── styles.css              # All 9 themes & responsive layout CSS
+│       ├── app.js                  # Client application JavaScript
+│       └── icon.{ico,png,svg}
+├── scripts/
+│   ├── build_standalone.py         # PyInstaller portable bundle builder
+│   └── install_linux_desktop.sh    # Linux application menu shortcut installer
+└── tests/                          # pytest, security, UI integrity & Playwright E2E
 ```

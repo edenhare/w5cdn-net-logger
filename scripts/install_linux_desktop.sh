@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$APP_DIR/w5cdn-net-logger.desktop"
 
-chmod +x "$SCRIPT_DIR/start.sh"
+chmod +x "$REPO_DIR/start.sh"
 mkdir -p "$APP_DIR"
 
 cat > "$DESKTOP_FILE" <<EOF
@@ -13,9 +13,9 @@ cat > "$DESKTOP_FILE" <<EOF
 Type=Application
 Name=W5CDN Net Logger
 Comment=Local Ham Radio Net Control, Skywarn, RACES & NTS Radiogram Logger
-Exec=$SCRIPT_DIR/start.sh
-Path=$SCRIPT_DIR
-Icon=$SCRIPT_DIR/static/icon.png
+Exec=$REPO_DIR/start.sh
+Path=$REPO_DIR
+Icon=$REPO_DIR/src/net_logger/static/icon.png
 Terminal=false
 Categories=HamRadio;Utility;Network;
 StartupWMClass=w5cdn-net-logger

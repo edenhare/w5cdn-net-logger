@@ -42,7 +42,7 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --group dev
 
       - name: Syntax check Python modules
-        run: uv run --python ${{ matrix.python-version }} python -m py_compile app.py desktop.py build_standalone.py
+        run: uv run --python ${{ matrix.python-version }} python -m py_compile src/net_logger/app.py src/net_logger/desktop.py scripts/build_standalone.py
 
       - name: Run full pytest suite (API, security, UI integrity, code quality & >=90% coverage)
         run: uv run --python ${{ matrix.python-version }} pytest -v --junitxml=pytest-results.xml --cov-report=json:coverage.json
@@ -68,7 +68,7 @@ jobs:
               data = json.loads(cov.read_text(encoding='utf-8'))
               metrics['coverage_total'] = round(float(data.get('totals', {}).get('percent_covered', 0.0)), 2)
               for fname, fdata in data.get('files', {}).items():
-                  metrics['files'][fname] = round(float(fdata.get('summary', {}).get('percent_covered', 0.0)), 1)
+                  metrics['files'][pathlib.Path(fname).name] = round(float(fdata.get('summary', {}).get('percent_covered', 0.0)), 1)
           pathlib.Path('ci-metrics.json').write_text(json.dumps(metrics, indent=2), encoding='utf-8')
           "
 
@@ -102,12 +102,12 @@ jobs:
 
       - name: Lint & bug-check with Ruff
         id: ruff
-        run: uvx ruff check app.py desktop.py build_standalone.py tests
+        run: uvx ruff check src scripts tests
 
       - name: Static security scan with Bandit (Medium/High severity)
         id: bandit
         if: always()
-        run: uvx bandit -r app.py desktop.py build_standalone.py -ll
+        run: uvx bandit -r src scripts -ll
 
       - name: Dependency vulnerability audit (pip-audit)
         id: pip_audit
@@ -345,7 +345,7 @@ jobs:
         run: uv sync --python 3.12 --group packaging
 
       - name: Build standalone portable bundle
-        run: uv run --python 3.12 --group packaging python build_standalone.py
+        run: uv run --python 3.12 --group packaging python scripts/build_standalone.py
 
       - name: Upload standalone artifact
         uses: actions/upload-artifact@v7

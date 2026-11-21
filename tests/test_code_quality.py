@@ -6,7 +6,10 @@ import ast
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_FILES = [PROJECT_ROOT / "app.py", PROJECT_ROOT / "desktop.py"]
+SOURCE_FILES = [
+    PROJECT_ROOT / "src" / "net_logger" / "app.py",
+    PROJECT_ROOT / "src" / "net_logger" / "desktop.py",
+]
 
 
 def test_no_bare_or_broad_exception_handlers() -> None:
