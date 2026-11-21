@@ -23,7 +23,7 @@ repos:
         exclude: \.(md|ico|png|svg)$
       - id: mixed-line-ending
         args: ["--fix=lf"]
-        files: ^(start\.sh|install_linux_desktop\.sh|\.github/.*\.ya?ml|\.pre-commit-config\.yaml)$
+        files: ^(start\.sh|scripts/install_linux_desktop\.sh|\.github/.*\.ya?ml|\.pre-commit-config\.yaml)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.10
@@ -36,7 +36,7 @@ repos:
     hooks:
       - id: bandit
         args: ["-ll"]
-        files: ^(app|desktop|build_standalone)\.py$
+        files: ^(src/net_logger/.*|scripts/build_standalone)\.py$
 
   - repo: local
     hooks:
@@ -50,13 +50,13 @@ repos:
         pass_filenames: true
 
       - id: ui-and-code-quality
-        name: Static UI integrity & exception quality checks
+        name: Static HTML/CSS/JS integrity & exception quality checks
         language: python
         additional_dependencies:
           - pytest>=8.3.0
         entry: pytest --noconftest -o addopts="" tests/test_ui_integrity.py tests/test_code_quality.py -q
         pass_filenames: false
-        files: ^(app\.py|desktop\.py|static/index\.html|start\.sh|install_linux_desktop\.sh|tests/test_(ui_integrity|code_quality)\.py)$
+        files: ^(src/net_logger/.*|start\.sh|scripts/install_linux_desktop\.sh|tests/test_(ui_integrity|code_quality)\.py)$
 
       - id: conventional-commit
         name: Validate Conventional Commit message

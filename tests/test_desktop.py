@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-import desktop
+from net_logger import desktop
 
 
 def test_find_available_port_preferred_and_fallback() -> None:

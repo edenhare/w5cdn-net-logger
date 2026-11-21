@@ -40,7 +40,8 @@ echo Installing dependencies...
 set "PY_BIN=.venv\Scripts\python.exe"
 
 :run
-"%PY_BIN%" desktop.py %*
+set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
+"%PY_BIN%" -m net_logger.desktop %*
 if %errorlevel% neq 0 (
     echo.
     echo W5CDN Net Logger exited with error code %errorlevel%.

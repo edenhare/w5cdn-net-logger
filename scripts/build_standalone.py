@@ -14,7 +14,10 @@ import sys
 import zipfile
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = ROOT_DIR / "src"
+PKG_DIR = SRC_DIR / "net_logger"
+STATIC_DIR = PKG_DIR / "static"
 APP_NAME = "W5CDN-Net-Logger"
 
 
@@ -35,7 +38,7 @@ def build_bundle() -> Path:
         shutil.rmtree(target_dir)
 
     data_sep = ";" if sys.platform == "win32" else ":"
-    static_arg = f"{ROOT_DIR / 'static'}{data_sep}static"
+    static_arg = f"{STATIC_DIR}{data_sep}static"
 
     cmd = [
         sys.executable,
@@ -46,8 +49,12 @@ def build_bundle() -> Path:
         "--onedir",
         "--name",
         APP_NAME,
+        "--paths",
+        str(SRC_DIR),
         "--add-data",
         static_arg,
+        "--hidden-import",
+        "net_logger.app",
         "--hidden-import",
         "uvicorn.logging",
         "--hidden-import",
@@ -68,11 +75,11 @@ def build_bundle() -> Path:
 
     if sys.platform == "win32":
         cmd.append("--windowed")
-        ico = ROOT_DIR / "static" / "icon.ico"
+        ico = STATIC_DIR / "icon.ico"
         if ico.is_file():
             cmd.extend(["--icon", str(ico)])
 
-    cmd.append(str(ROOT_DIR / "desktop.py"))
+    cmd.append(str(PKG_DIR / "desktop.py"))
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=str(ROOT_DIR))
 

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "net-logger"
 version = "0.1.0"
@@ -9,6 +13,12 @@ dependencies = [
     "pywebview>=5.3; sys_platform == 'win32' or sys_platform == 'darwin'",
     "uvicorn>=0.32.0",
 ]
+
+[project.scripts]
+w5cdn-net-logger = "net_logger.desktop:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/net_logger"]
 
 [dependency-groups]
 dev = [
@@ -25,9 +35,9 @@ packaging = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "--cov=app --cov=desktop --cov-report=term-missing --cov-fail-under=90"
+addopts = "--cov=net_logger --cov-report=term-missing --cov-fail-under=90"
 markers = [
     "ui: Playwright real-browser UI E2E and WCAG accessibility tests",
 ]

@@ -20,7 +20,12 @@ from typing import Sequence
 import httpx
 import uvicorn
 
-from app import APP_TITLE, BUNDLE_DIR, app, parse_port, register_shutdown_callback
+if __package__ in {None, ""}:
+    _src_root = str(Path(__file__).resolve().parent.parent)
+    if _src_root not in sys.path:
+        sys.path.insert(0, _src_root)
+
+from net_logger.app import APP_TITLE, BUNDLE_DIR, app, parse_port, register_shutdown_callback
 
 logger = logging.getLogger("net_logger.desktop")
 
