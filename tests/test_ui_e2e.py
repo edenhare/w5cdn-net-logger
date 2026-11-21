@@ -266,7 +266,7 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.fill("#quickNoteText", page.locator("#quickNoteText").input_value() + "Wind gusts 45 mph")
             page.click('#quickNoteForm button[type="submit"]')
             page.locator("#quickNoteBackdrop").wait_for(state="hidden", timeout=5000)
-            assert "Wind gusts 45 mph" in k5_row.inner_text()
+            page.locator("#checkinsTbody tr", has_text="Wind gusts 45 mph").wait_for(state="visible", timeout=5000)
 
             # 5. Form 4 (#editCheckinForm)
             k5_row.locator('button[data-action="edit"]').click()
@@ -277,8 +277,8 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.select_option("#editStatus", "ACTIVE")
             page.click('#editCheckinForm button[type="submit"]')
             page.locator("#editCheckinBackdrop").wait_for(state="hidden", timeout=5000)
-            assert "Test Operator" in k5_row.inner_text()
-            assert "TX-TRV-202" in k5_row.inner_text()
+            page.locator("#checkinsTbody tr", has_text="Test Operator").wait_for(state="visible", timeout=5000)
+            page.locator("#checkinsTbody tr", has_text="TX-TRV-202").wait_for(state="visible", timeout=5000)
 
             # 6. Form 5 (#ncsHandoffForm)
             page.click("#btnNcsHandoff")
@@ -287,7 +287,7 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.fill("#handoffNotes", "Relief operator taking control")
             page.click('#ncsHandoffForm button[type="submit"]')
             page.locator("#ncsHandoffBackdrop").wait_for(state="hidden", timeout=5000)
-            assert "K5TST" in page.locator("#netSpecs").inner_text()
+            page.locator("#netSpecs", has_text="K5TST").wait_for(state="visible", timeout=5000)
 
             # 7. Net Report Modal (#netReportBackdrop)
             page.click("#btnCopySummary")

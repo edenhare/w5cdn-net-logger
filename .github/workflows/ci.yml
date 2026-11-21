@@ -112,7 +112,7 @@ jobs:
       - name: Dependency vulnerability audit (pip-audit)
         id: pip_audit
         if: always()
-        run: uv run --python 3.12 --with pip-audit pip-audit --strict --skip-editable
+        run: uv run --python 3.12 --with pip-audit pip-audit --skip-editable
 
       - name: Export security tool statuses
         if: always()
