@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload pytest & coverage metrics
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ci-metrics
           path: ci-metrics.json
@@ -133,7 +133,7 @@ jobs:
 
       - name: Upload security tool statuses
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-metrics
           path: security-metrics.json
@@ -348,7 +348,7 @@ jobs:
         run: uv run --python 3.12 --group packaging python build_standalone.py
 
       - name: Upload standalone artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: standalone-${{ matrix.os }}
           path: release/W5CDN-Net-Logger-*.zip
