@@ -125,6 +125,9 @@ uv run pre-commit run --all-files
 # Run full test suite (with coverage gate >= 90%)
 uv run pytest -v
 
+# Run full real-browser Playwright UI E2E & WCAG accessibility tests locally
+uv run --group dev --group ui pytest tests/test_ui_e2e.py --no-cov -v
+
 # Build a standalone portable .zip for your current OS (Windows or Linux)
 uv run --group packaging python build_standalone.py
 # Output: release/W5CDN-Net-Logger-<os>-<arch>.zip
