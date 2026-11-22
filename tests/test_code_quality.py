@@ -10,6 +10,8 @@ SOURCE_FILES = [
     PROJECT_ROOT / "src" / "net_logger" / "app.py",
     PROJECT_ROOT / "src" / "net_logger" / "desktop.py",
     PROJECT_ROOT / "src" / "net_logger" / "updater.py",
+    PROJECT_ROOT / "scripts" / "build_standalone.py",
+    PROJECT_ROOT / "scripts" / "generate_changelog.py",
 ]
 
 

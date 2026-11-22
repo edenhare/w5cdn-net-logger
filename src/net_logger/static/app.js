@@ -3978,7 +3978,9 @@
           return;
         }
 
-        const openNet = Boolean(info.has_open_net) || state.nets.some((n) => !n.ended_at);
+        const openNet = state.nets.length
+          ? state.nets.some((n) => !n.ended_at)
+          : Boolean(info.has_open_net);
         let msg = info.message || "";
         if (info.update_available && openNet) {
           msg += " Close active net sessions before installing.";

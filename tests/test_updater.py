@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import shutil
 import sqlite3
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -673,3 +675,160 @@ def test_update_endpoints_and_open_net_lock(isolated_client, monkeypatch: pytest
     src_resp = client.post("/api/update/apply")
     assert src_resp.status_code == 400
     assert "GitHub Releases" in src_resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Real (unmocked) OS / Git integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_real_git_fast_forward_update_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise real git fetch + git pull --ff-only against a local bare remote."""
+    git_bin = shutil.which("git")
+    if not git_bin:
+        pytest.skip("git binary not available")
+
+    def _git(args: list[str], cwd: Path) -> None:
+        proc = subprocess.run(  # nosec B603
+            [git_bin, *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30.0,
+        )
+        assert proc.returncode == 0, f"git {' '.join(args)} failed: {proc.stderr}"
+
+    remote_bare = tmp_path / "remote.git"
+    remote_bare.mkdir()
+    _git(["init", "--bare", "--initial-branch=main"], remote_bare)
+
+    upstream = tmp_path / "upstream"
+    _git(["clone", str(remote_bare), str(upstream)], tmp_path)
+    _git(["config", "user.name", "Test Operator"], upstream)
+    _git(["config", "user.email", "w5cdn@example.org"], upstream)
+    _git(["checkout", "-B", "main"], upstream)
+    (upstream / ".gitignore").write_text("*.db\n*.bak\n", encoding="utf-8")
+    (upstream / "version.txt").write_text("0.1.0\n", encoding="utf-8")
+    _git(["add", ".gitignore", "version.txt"], upstream)
+    _git(["commit", "-m", "chore: initial v0.1.0"], upstream)
+    _git(["push", "-u", "origin", "main"], upstream)
+
+    local_app = tmp_path / "local_app"
+    _git(["clone", "--branch", "main", str(remote_bare), str(local_app)], tmp_path)
+
+    # Create a real SQLite DB in the local clone (ignored by .gitignore, just like production)
+    db_file = local_app / "net_logger.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("CREATE TABLE logs (msg TEXT)")
+    conn.execute("INSERT INTO logs VALUES ('KEEP_ME')")
+    conn.commit()
+    conn.close()
+
+    # Push a new commit + tag to the bare remote
+    (upstream / "version.txt").write_text("0.2.0\n", encoding="utf-8")
+    _git(["add", "version.txt"], upstream)
+    _git(["commit", "-m", "feat: bump to v0.2.0"], upstream)
+    _git(["tag", "v0.2.0"], upstream)
+    _git(["push", "origin", "main", "--tags"], upstream)
+
+    # Keep real git, skip uv/pip dependency sync inside the synthetic test repo
+    real_which = shutil.which
+    monkeypatch.setattr(
+        updater.shutil,
+        "which",
+        lambda name: real_which(name) if name == "git" else None,
+    )
+
+    res = updater.apply_git_update(local_app, db_file)
+    assert res["ok"] is True
+    assert res["branch"] == "main"
+    assert res["backup_created"] is True
+    assert (local_app / "version.txt").read_text(encoding="utf-8").strip() == "0.2.0"
+
+    bak_file = local_app / "net_logger.pre_update.bak"
+    assert bak_file.is_file()
+    bconn = sqlite3.connect(str(bak_file))
+    assert bconn.execute("SELECT msg FROM logs").fetchone() == ("KEEP_ME",)
+    bconn.close()
+
+    # Real uncommitted modification must be refused cleanly
+    (local_app / "version.txt").write_text("dirty-edit\n", encoding="utf-8")
+    with pytest.raises(updater.UpdateError) as ei:
+        updater.apply_git_update(local_app, db_file)
+    assert ei.value.code == "git_dirty"
+
+
+def test_real_standalone_swap_script_execution(tmp_path: Path) -> None:
+    """Execute the generated OS swap script (.bat on Windows / .sh on Linux) and verify user data preservation."""
+    app_dir = tmp_path / "app"
+    (app_dir / "_internal").mkdir(parents=True)
+    (app_dir / "radiograms").mkdir(parents=True)
+    (app_dir / "outbox").mkdir(parents=True)
+
+    # Existing application files + protected user data
+    (app_dir / "app_payload.txt").write_text("v0.1.0", encoding="utf-8")
+    (app_dir / "_internal" / "runtime.txt").write_text("old-runtime", encoding="utf-8")
+    (app_dir / "net_logger.db").write_text("USER-SQLITE-DB", encoding="utf-8")
+    (app_dir / ".env").write_text("QRZ_USER=W5CDN", encoding="utf-8")
+    (app_dir / "net_logger.pre_update.bak").write_text("PRE-UPDATE-BAK", encoding="utf-8")
+    (app_dir / "radiograms" / "RG-001.txt").write_text("ARRL RADIOGRAM", encoding="utf-8")
+    (app_dir / "outbox" / "msg.txt").write_text("STAGED-OUTBOX", encoding="utf-8")
+
+    # Staged update payload (intentionally includes decoy user files to prove preservation)
+    staging_root = app_dir / "_update_staging"
+    payload_dir = staging_root / "extracted" / "W5CDN-Net-Logger"
+    (payload_dir / "_internal").mkdir(parents=True)
+    (payload_dir / "radiograms").mkdir(parents=True)
+    (payload_dir / "app_payload.txt").write_text("v0.2.0", encoding="utf-8")
+    (payload_dir / "_internal" / "runtime.txt").write_text("new-runtime", encoding="utf-8")
+    (payload_dir / "net_logger.db").write_text("OVERWRITTEN-BAD", encoding="utf-8")
+    (payload_dir / ".env").write_text("OVERWRITTEN-BAD", encoding="utf-8")
+    (payload_dir / "radiograms" / "RG-001.txt").write_text("OVERWRITTEN-BAD", encoding="utf-8")
+
+    # Obtain a guaranteed-exited PID so the script exits its wait loop immediately
+    dead_proc = subprocess.Popen([sys.executable, "-c", "pass"])  # nosec B603
+    dead_proc.wait(timeout=10.0)
+    dead_pid = dead_proc.pid
+
+    script_path = updater._write_standalone_swap_script(
+        data_dir=app_dir,
+        payload_dir=payload_dir,
+        staging_root=staging_root,
+        pid=dead_pid,
+    )
+
+    if sys.platform == "win32":
+        cmd_bin = shutil.which("cmd.exe") or "cmd.exe"
+        subprocess.run(  # nosec B603
+            [cmd_bin, "/c", str(script_path)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30.0,
+        )
+    else:
+        bash_bin = shutil.which("bash") or "/bin/bash"
+        proc = subprocess.run(  # nosec B603
+            [bash_bin, str(script_path)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30.0,
+        )
+        assert proc.returncode == 0, f"Swap script failed: {proc.stderr}"
+
+    # Application files were updated
+    assert (app_dir / "app_payload.txt").read_text(encoding="utf-8") == "v0.2.0"
+    assert (app_dir / "_internal" / "runtime.txt").read_text(encoding="utf-8") == "new-runtime"
+
+    # All user data & backups were preserved intact
+    assert (app_dir / "net_logger.db").read_text(encoding="utf-8") == "USER-SQLITE-DB"
+    assert (app_dir / ".env").read_text(encoding="utf-8") == "QRZ_USER=W5CDN"
+    assert (app_dir / "net_logger.pre_update.bak").read_text(encoding="utf-8") == "PRE-UPDATE-BAK"
+    assert (app_dir / "radiograms" / "RG-001.txt").read_text(encoding="utf-8") == "ARRL RADIOGRAM"
+    assert (app_dir / "outbox" / "msg.txt").read_text(encoding="utf-8") == "STAGED-OUTBOX"

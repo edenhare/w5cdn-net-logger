@@ -332,7 +332,19 @@ def test_run_app_window_loop(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_parse_args() -> None:
     args = desktop.parse_args(
-        ["--app-window", "--chrome", "--app-browser", "chrome", "--browser", "--debug", "--port", "9090"]
+        [
+            "--app-window",
+            "--chrome",
+            "--app-browser",
+            "chrome",
+            "--browser",
+            "--debug",
+            "--port",
+            "9090",
+            "--smoke-test",
+            "--smoke-test-out",
+            "out.json",
+        ]
     )
     assert args.app_window is True
     assert args.chrome is True
@@ -340,6 +352,52 @@ def test_parse_args() -> None:
     assert args.browser is True
     assert args.debug is True
     assert args.port == 9090
+    assert args.smoke_test is True
+    assert args.smoke_test_out == "out.json"
+
+
+def test_run_smoke_test_and_main_smoke_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResp:
+        def __init__(self, status_code: int, text: str = "", data: dict | None = None) -> None:
+            self.status_code = status_code
+            self.text = text
+            self._data = data or {}
+
+        def json(self) -> dict:
+            return self._data
+
+    def fake_get_ok(url: str, timeout: float = 5.0) -> FakeResp:
+        if url.endswith("/api/config"):
+            return FakeResp(200, data={"version": "0.1.0", "install_mode": "standalone"})
+        return FakeResp(200, text=f"<title>{desktop.APP_TITLE}</title>")
+
+    monkeypatch.setattr(desktop.httpx, "get", fake_get_ok)
+    out_file = tmp_path / "smoke.json"
+    assert desktop.run_smoke_test("http://127.0.0.1:8765", out_path=str(out_file)) is True
+    assert out_file.is_file()
+    assert '"install_mode": "standalone"' in out_file.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(
+        desktop.httpx,
+        "get",
+        lambda _u, timeout=5.0: (_ for _ in ()).throw(desktop.httpx.ConnectError("down")),
+    )
+    assert desktop.run_smoke_test("http://127.0.0.1:8765") is False
+
+    class DummyServer:
+        should_exit = False
+
+    class DummyThread(threading.Thread):
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(desktop, "find_available_port", lambda _h, _p: 8765)
+    monkeypatch.setattr(desktop, "start_uvicorn_thread", lambda _h, _p: (DummyServer(), DummyThread()))
+    monkeypatch.setattr(desktop, "wait_for_server", lambda _u: True)
+    monkeypatch.setattr(desktop, "run_smoke_test", lambda _u, out_path="": True)
+    assert desktop.main(["--smoke-test"]) == 0
+    monkeypatch.setattr(desktop, "run_smoke_test", lambda _u, out_path="": False)
+    assert desktop.main(["--smoke-test"]) == 1
 
 
 def test_main_paths(monkeypatch: pytest.MonkeyPatch) -> None:
