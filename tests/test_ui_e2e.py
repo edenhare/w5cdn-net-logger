@@ -501,6 +501,12 @@ def test_ui_wcag_accessibility_all_9_themes(live_app_server: str) -> None:
         page.locator('[data-quick-preset="RACES"]').click()
         page.locator("#netFormSubmitBtn").click()
         page.locator("#activeNetWorkspace").wait_for(state="visible", timeout=5000)
+        # Wait for the transient "Net started" toast fade-out to finish so axe-core
+        # never measures a mid-fade translucent toast (opacity < 1.0) during theme scans.
+        page.wait_for_function(
+            "() => document.querySelectorAll('#toastStack .toast').length === 0",
+            timeout=6000,
+        )
 
         failures: list[str] = []
         for theme in (
@@ -558,6 +564,10 @@ def test_ui_wcag_accessibility_modals_and_drawers(live_app_server: str) -> None:
         _audit("Start Net Modal")
         page.click("#netFormSubmitBtn")
         page.locator("#activeNetWorkspace").wait_for(state="visible", timeout=5000)
+        page.wait_for_function(
+            "() => document.querySelectorAll('#toastStack .toast').length === 0",
+            timeout=6000,
+        )
 
         # Preferences Modal (Appearance, QRZ/Skywarn, Packet/Winlink)
         page.click("#btnOpenPrefs")
@@ -639,11 +649,13 @@ def test_ui_keyboard_shortcuts_focus_zoom_and_media(live_app_server: str) -> Non
         # Alt+G toggles Radiograms drawer; Alt+R toggles Roster drawer
         page.keyboard.press("Alt+g")
         page.locator("#panelRadiograms").wait_for(state="visible", timeout=3000)
+        page.wait_for_load_state("networkidle")
         page.keyboard.press("Alt+g")
         page.locator("#panelRadiograms").wait_for(state="hidden", timeout=3000)
 
         page.keyboard.press("Alt+r")
         page.locator("#panelRoster").wait_for(state="visible", timeout=3000)
+        page.wait_for_load_state("networkidle")
         page.keyboard.press("Alt+r")
         page.locator("#panelRoster").wait_for(state="hidden", timeout=3000)
 
