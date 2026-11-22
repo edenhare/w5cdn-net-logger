@@ -151,9 +151,19 @@ w5cdn-net-logger/
 │       └── icon.{ico,png,svg}
 ├── scripts/
 │   ├── build_standalone.py         # PyInstaller portable bundle builder
+│   ├── generate_changelog.py       # Automated Conventional Commits release notes
 │   └── install_linux_desktop.sh    # Linux application menu shortcut installer
+├── docs/
+│   └── MANUAL_UI_TEST_PLAN.md      # Reusable release manual UI & QA test plan
 └── tests/                          # pytest, security, UI integrity & Playwright E2E
 ```
+
+---
+
+## Testing & Quality Assurance
+
+- **Automated tests:** Run `uv run pytest -v` (includes API, security, migrations, updater integration, HTML/JS static integrity, and >=90% coverage) and `uv run --group dev --group ui pytest tests/test_ui_e2e.py --no-cov -v` for Playwright + `axe-core` WCAG checks.
+- **Manual UI QA:** Follow [docs/MANUAL_UI_TEST_PLAN.md](docs/MANUAL_UI_TEST_PLAN.md) before cutting releases, and keep it updated whenever UI features or workflows change.
 
 ---
 
