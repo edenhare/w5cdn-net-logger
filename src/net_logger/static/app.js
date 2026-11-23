@@ -3964,6 +3964,7 @@
       // -----------------------------------------------------------------------
       function renderUpdateStatus(info) {
         const verEl = $("updateVersionPill");
+        const topVerEl = $("appVersionPill");
         const modeEl = $("updateModePill");
         const statusEl = $("updateStatusText");
         const linkEl = $("updateReleaseLink");
@@ -3981,6 +3982,10 @@
         }[mode] || mode.toUpperCase();
 
         verEl.textContent = `v${curVer}`;
+        if (topVerEl) {
+          topVerEl.textContent = `v${curVer}`;
+          topVerEl.title = `Running W5CDN Net Logger v${curVer} (${modeLabel.toLowerCase()}) — click to check for updates`;
+        }
         modeEl.textContent = modeLabel;
 
         if (!info) {
@@ -4041,6 +4046,24 @@
           } else {
             applyBtn.classList.add("hidden");
           }
+        }
+      }
+
+      async function openUpdatesInPreferences() {
+        await openPreferencesModal("qrz");
+        const card = $("updateSectionCard");
+        if (card) {
+          card.scrollIntoView({ behavior: "smooth", block: "center" });
+          card.classList.remove("update-card-highlight");
+          void card.offsetWidth;
+          card.classList.add("update-card-highlight");
+          setTimeout(() => card.classList.remove("update-card-highlight"), 2200);
+        }
+        const applyBtn = $("btnApplyUpdate");
+        if (applyBtn && !applyBtn.classList.contains("hidden") && !applyBtn.disabled) {
+          applyBtn.focus({ preventScroll: true });
+        } else {
+          $("btnCheckUpdate")?.focus({ preventScroll: true });
         }
       }
 
@@ -4728,7 +4751,8 @@
           e.target.value = "";
           if (file) restoreBackupArchiveFile(file);
         });
-        $("btnUpdateBanner").addEventListener("click", () => openPreferencesModal("qrz"));
+        $("btnUpdateBanner").addEventListener("click", openUpdatesInPreferences);
+        $("appVersionPill")?.addEventListener("click", openUpdatesInPreferences);
         $("btnCheckUpdate").addEventListener("click", () => checkAppUpdates(false));
         $("btnApplyUpdate").addEventListener("click", handleApplyUpdate);
 

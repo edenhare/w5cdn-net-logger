@@ -19,6 +19,7 @@
           <span class="brand-call">W5CDN</span>
           <span class="brand-title">NET LOGGER</span>
         </div>
+        <button type="button" class="app-version-pill mono" id="appVersionPill" title="Running W5CDN Net Logger version — click to check for updates">v—</button>
         <span class="lookup-source-pill hidden" id="operatorCallBadge" title="Active Operator / Default NCS Callsign (click to edit)"></span>
         <span class="lookup-source-pill" id="lookupSourcePill" title="Click to configure QRZ XML credentials">CALLOOK</span>
         <button type="button" class="btn btn-success btn-xs hidden" id="btnUpdateBanner" title="A newer version of W5CDN Net Logger is available — click to review and update">↑ Update</button>
@@ -991,7 +992,7 @@
               </div>
             </div>
 
-            <div style="display:flex; flex-direction:column; gap:8px; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input);">
+            <div id="updateSectionCard" style="display:flex; flex-direction:column; gap:8px; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input);">
               <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                 <div>
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">

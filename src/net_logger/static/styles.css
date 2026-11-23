@@ -680,6 +680,31 @@ button, input, select, textarea {
   box-shadow: 0 0 6px var(--accent-emerald);
 }
 
+.app-version-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75em;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.app-version-pill:hover,
+.app-version-pill:focus-visible {
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
+}
+
+.update-card-highlight {
+  border-color: var(--accent-emerald) !important;
+  box-shadow: 0 0 0 2px var(--accent-emerald-bg);
+}
+
 /* Digital VFO Readout Strip */
 .vfo-cluster {
   display: flex;
