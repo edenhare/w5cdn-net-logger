@@ -3194,6 +3194,9 @@ async def security_middleware(request: Request, call_next: Any) -> Response:
         if origin is not None and not _is_allowed_origin(origin):
             return JSONResponse(status_code=403, content={"detail": "Forbidden cross-origin request"})
 
+    if request.url.path != "/api/client/unload":
+        cancel_pending_shutdown()
+
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -3230,10 +3233,10 @@ class WindowShutdownManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._callback: Callable[[], None] | None = None
-        self._grace_seconds: float = 1.5
+        self._grace_seconds: float = 4.0
         self._timer: threading.Timer | None = None
 
-    def register(self, callback: Callable[[], None] | None, grace_seconds: float = 1.5) -> None:
+    def register(self, callback: Callable[[], None] | None, grace_seconds: float = 4.0) -> None:
         with self._lock:
             if self._timer is not None:
                 self._timer.cancel()
@@ -3273,7 +3276,7 @@ shutdown_manager = WindowShutdownManager()
 
 def register_shutdown_callback(
     callback: Callable[[], None] | None,
-    grace_seconds: float = 1.5,
+    grace_seconds: float = 4.0,
 ) -> None:
     shutdown_manager.register(callback, grace_seconds=grace_seconds)
 
@@ -3302,6 +3305,11 @@ async def serve_favicon() -> FileResponse:
 @app.post("/api/client/unload")
 async def client_unload() -> dict[str, bool]:
     return {"scheduled": shutdown_manager.schedule()}
+
+
+@app.get("/api/health")
+async def health_check() -> dict[str, Any]:
+    return {"ok": True, "version": APP_VERSION}
 
 
 @app.get("/api/config")

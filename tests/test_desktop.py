@@ -658,3 +658,63 @@ def test_ensure_stdio_streams_and_consoleless_uvicorn(monkeypatch: pytest.Monkey
     assert server.config.log_config is None
     assert server.config.use_colors is False
     assert sys.stdout is not None and sys.stderr is not None
+
+
+def test_run_uvicorn_supervised_and_thread_exception_logger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(desktop, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(desktop.time, "sleep", lambda _s: None)
+
+    # 1. Startup failure (never marked started) logs and exits without restarting
+    class StartupFailServer:
+        should_exit = False
+        force_exit = False
+        started = False
+        runs = 0
+
+        def run(self) -> None:
+            self.runs += 1
+            raise OSError("address in use")
+
+    srv_fail = StartupFailServer()
+    desktop._run_uvicorn_supervised(srv_fail, "127.0.0.1", 8765, max_restarts=2)  # type: ignore[arg-type]
+    assert srv_fail.runs == 1
+    log_text = (tmp_path / "desktop_startup.log").read_text(encoding="utf-8")
+    assert "address in use" in log_text
+
+    # 2. Unexpected mid-session exit auto-restarts up to max_restarts and logs each attempt
+    class FlakyRunningServer:
+        should_exit = False
+        force_exit = False
+        started = False
+        runs = 0
+
+        def run(self) -> None:
+            self.runs += 1
+            self.started = True
+
+    srv_flaky = FlakyRunningServer()
+    desktop._run_uvicorn_supervised(srv_flaky, "127.0.0.1", 8765, max_restarts=2)  # type: ignore[arg-type]
+    assert srv_flaky.runs == 3  # 1 initial + 2 restarts
+    log_text = (tmp_path / "desktop_startup.log").read_text(encoding="utf-8")
+    assert "exceeded max restarts" in log_text
+
+    # 3. Thread excepthook records uncaught net-logger-uvicorn errors to desktop_startup.log
+    orig_hook = threading.excepthook
+    try:
+        called_prev: list[object] = []
+        threading.excepthook = lambda args: called_prev.append(args)
+        desktop._install_thread_exception_logger()
+        desktop._install_thread_exception_logger()  # idempotent
+        fake_args = types.SimpleNamespace(
+            exc_type=RuntimeError,
+            exc_value=RuntimeError("boom"),
+            exc_traceback=None,
+            thread=types.SimpleNamespace(name="net-logger-uvicorn"),
+        )
+        threading.excepthook(fake_args)  # type: ignore[arg-type]
+        assert len(called_prev) == 1
+        assert "Uncaught backend thread exception" in (tmp_path / "desktop_startup.log").read_text(encoding="utf-8")
+    finally:
+        threading.excepthook = orig_hook

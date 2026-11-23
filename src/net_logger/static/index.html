@@ -63,6 +63,12 @@
       </div>
     </header>
 
+    <!-- Backend Connection Loss Alert Banner -->
+    <div class="backend-offline-banner hidden" id="backendOfflineBanner" role="alert" aria-live="assertive">
+      <span id="backendOfflineText">Local Net Logger backend disconnected — changes cannot be saved until the backend is running again.</span>
+      <button type="button" class="btn btn-sm" id="btnRetryBackend">Retry Connection</button>
+    </div>
+
     <!-- Main Workspace: [Left Side Rail] [5-Zone Dockable Stage] + [Left-Rail Net Sessions Drawer] -->
     <div class="workspace" id="workspace">
       <!-- Slim Left Side Rail -->

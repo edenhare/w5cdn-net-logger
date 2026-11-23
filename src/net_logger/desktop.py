@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import webbrowser
 from pathlib import Path
 from typing import Sequence
@@ -261,8 +262,58 @@ def ensure_stdio_streams() -> None:
         sys.stderr = _NullTextIO()
 
 
+def _install_thread_exception_logger() -> None:
+    """Ensure any uncaught exception in the backend thread is recorded to desktop_startup.log."""
+    prev_hook = threading.excepthook
+    if getattr(prev_hook, "_w5cdn_wrapped", False):
+        return
+
+    def _hook(args: threading.ExceptHookArgs) -> None:
+        if args.thread is not None and args.thread.name == "net-logger-uvicorn":
+            tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+            _log_startup(f"Uncaught backend thread exception:\n{tb.rstrip()}")
+        prev_hook(args)
+
+    _hook._w5cdn_wrapped = True  # type: ignore[attr-defined]
+    threading.excepthook = _hook
+
+
+def _run_uvicorn_supervised(
+    server: uvicorn.Server,
+    host: str,
+    port: int,
+    *,
+    max_restarts: int = 3,
+) -> None:
+    """Run embedded Uvicorn, logging crashes and auto-restarting unexpected mid-session exits."""
+    restarts = 0
+    while not server.should_exit and not server.force_exit:
+        try:
+            server.run()
+        except (OSError, RuntimeError, ValueError, SystemExit) as exc:
+            _log_startup(f"Backend server error on {host}:{port}: {type(exc).__name__}: {exc}")
+            if server.should_exit or server.force_exit:
+                break
+        if server.should_exit or server.force_exit:
+            break
+        if not getattr(server, "started", False):
+            _log_startup(f"Backend server exited before startup completed on {host}:{port}.")
+            break
+        restarts += 1
+        _log_startup(
+            f"Backend server exited unexpectedly on {host}:{port} "
+            f"(restart {restarts}/{max_restarts})."
+        )
+        if restarts > max_restarts:
+            _log_startup(f"Backend server exceeded max restarts ({max_restarts}); stopping.")
+            break
+        time.sleep(0.5)
+        server.started = False
+
+
 def start_uvicorn_thread(host: str, port: int) -> tuple[uvicorn.Server, threading.Thread]:
     ensure_stdio_streams()
+    _install_thread_exception_logger()
     config = uvicorn.Config(
         app,
         host=host,
@@ -275,7 +326,12 @@ def start_uvicorn_thread(host: str, port: int) -> tuple[uvicorn.Server, threadin
     )
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
-    thread = threading.Thread(target=server.run, name="net-logger-uvicorn", daemon=True)
+    thread = threading.Thread(
+        target=_run_uvicorn_supervised,
+        args=(server, host, port),
+        name="net-logger-uvicorn",
+        daemon=True,
+    )
     thread.start()
     return server, thread
 
