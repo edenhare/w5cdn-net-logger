@@ -151,12 +151,23 @@ w5cdn-net-logger/
 │       └── icon.{ico,png,svg}
 ├── scripts/
 │   ├── build_standalone.py         # PyInstaller portable bundle builder
+│   ├── bump_version.py             # Semantic version bumper & consistency validator
 │   ├── generate_changelog.py       # Automated Conventional Commits release notes
 │   └── install_linux_desktop.sh    # Linux application menu shortcut installer
 ├── docs/
 │   └── MANUAL_UI_TEST_PLAN.md      # Reusable release manual UI & QA test plan
 └── tests/                          # pytest, security, UI integrity & Playwright E2E
 ```
+
+---
+
+## Cutting a Release (On-Demand)
+
+1. Go to **GitHub Actions → Prepare Release PR → Run workflow** and select `patch`, `minor`, or `major` (or enter an explicit `X.Y.Z` version).
+2. Review and merge the generated `release/vX.Y.Z` PR into `main`.
+3. On merge, **Publish Release** automatically tags `main` with `vX.Y.Z`, builds & smoke-tests the Windows and Linux standalone `.zip` bundles, generates `CHANGELOG.md` and `SHA256SUMS.txt`, and publishes the GitHub Release.
+
+*(Optional: Add a repository secret named `RELEASE_TOKEN` with a fine-grained PAT having Contents + Pull Requests write permissions so PRs opened by **Prepare Release PR** trigger CI checks automatically without needing to close/reopen the PR.)*
 
 ---
 
