@@ -632,6 +632,25 @@ jobs:
               assert data.get("install_mode") == "standalone", f"Expected standalone install_mode: {data}"
               assert data.get("index_status") == 200 and data.get("config_status") == 200
 
+              if sys.platform == "win32":
+                  smoke_detached = tmp_dir / "smoke-detached.json"
+                  detached = subprocess.run(
+                      [str(exe), "--smoke-test", "--smoke-test-out", str(smoke_detached), "--port", "0"],
+                      cwd=str(app_dir),
+                      env=env,
+                      stdin=None,
+                      stdout=None,
+                      stderr=None,
+                      close_fds=True,
+                      creationflags=subprocess.DETACHED_PROCESS,
+                      timeout=45.0,
+                      check=False,
+                  )
+                  assert detached.returncode == 0, f"Detached Windows GUI smoke test failed (rc={detached.returncode})"
+                  assert smoke_detached.is_file(), "Detached Windows GUI smoke test did not write verification JSON"
+                  detached_data = json.loads(smoke_detached.read_text(encoding="utf-8"))
+                  assert detached_data.get("ok") is True, f"Detached smoke test reported failure: {detached_data}"
+
               size_mb = round(zip_path.stat().st_size / (1024 * 1024), 2)
               print(f"Standalone smoke test PASSED for {zip_path.name} ({size_mb} MiB): {json.dumps(data)}")
               summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")

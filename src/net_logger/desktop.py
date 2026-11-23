@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import io
 import json
 import logging
 import os
@@ -200,13 +201,41 @@ class DesktopBridge:
             return {"saved": False, "error": str(exc)}
 
 
+class _NullTextIO(io.TextIOBase):
+    """Writable no-op text stream for console-less GUI processes (always non-TTY)."""
+
+    @property
+    def encoding(self) -> str:
+        return "utf-8"
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, s: str) -> int:
+        return len(s)
+
+    def isatty(self) -> bool:
+        return False
+
+
+def ensure_stdio_streams() -> None:
+    """Provide writable null streams when running console-less (PyInstaller --windowed)."""
+    if sys.stdout is None:
+        sys.stdout = _NullTextIO()
+    if sys.stderr is None:
+        sys.stderr = _NullTextIO()
+
+
 def start_uvicorn_thread(host: str, port: int) -> tuple[uvicorn.Server, threading.Thread]:
+    ensure_stdio_streams()
     config = uvicorn.Config(
         app,
         host=host,
         port=port,
         log_level="warning",
         access_log=False,
+        log_config=None,
+        use_colors=False,
         timeout_graceful_shutdown=1.0,
     )
     server = uvicorn.Server(config)
@@ -389,6 +418,7 @@ def run_smoke_test(url: str, out_path: str = "") -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    ensure_stdio_streams()
     set_windows_app_id()
     args = parse_args(argv)
     host = os.environ.get("HOST", "127.0.0.1")
