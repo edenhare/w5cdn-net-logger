@@ -1,5 +1,7 @@
 # Local runtime data & credentials (NEVER commit personal logs or passwords)
 .env
+config.txt
+desktop_startup.log
 *.db
 *.db-wal
 *.db-shm

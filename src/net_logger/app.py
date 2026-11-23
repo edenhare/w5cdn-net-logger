@@ -133,13 +133,13 @@ def _parse_xml_safely(xml_text: str) -> ET.Element:
 
 
 def load_dotenv(path: Path) -> None:
-    """Load key=value pairs from a local .env file without overriding existing env vars."""
+    """Load key=value pairs from a local config file (config.txt or .env) without overriding env vars."""
     if not path.is_file():
         return
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as exc:
-        logger.warning("Could not read .env file %s: %s", path, exc)
+        logger.warning("Could not read config file %s: %s", path, exc)
         return
     for raw_line in content.splitlines():
         line = raw_line.strip()
@@ -154,7 +154,13 @@ def load_dotenv(path: Path) -> None:
             os.environ[key] = value
 
 
-load_dotenv(BASE_DIR / ".env")
+def load_config_files(base_dir: Path = BASE_DIR) -> None:
+    """Load optional local config.txt first, then fall back to legacy .env."""
+    load_dotenv(base_dir / "config.txt")
+    load_dotenv(base_dir / ".env")
+
+
+load_config_files(BASE_DIR)
 
 
 DEFAULT_NCS_SCRIPT = """=== OPENING PREAMBLE ===

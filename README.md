@@ -92,7 +92,7 @@ Requires **Python 3.11+** (or [`uv`](https://docs.astral.sh/uv/)).
 ## First-Run Setup Checklist
 When launching on a new machine, open **Preferences** (gear icon in the top bar) to configure:
 1. **Operator, QRZ, Skywarn & Folders:**
-   - Set your **Default Operator / NCS Callsign** (defaults to `W5CDN` unless changed here or via `OPERATOR_CALL` in `.env`).
+   - Set your **Default Operator / NCS Callsign** (defaults to `W5CDN` unless changed here or via `OPERATOR_CALL` in optional `config.txt` / `.env`).
    - Optionally add **QRZ.com XML** credentials (falls back automatically to free Callook.info if blank).
    - Set your **Skywarn Default County/Counties & State** and **NWS Office Contact** (spotter hotline, email, NWSChat URL, radio/Winlink liaison).
 2. **Net Defaults:**
@@ -108,7 +108,7 @@ When launching on a new machine, open **Preferences** (gear icon in the top bar)
   - `radiograms/` (permanent plain-text copies of every ARRL Radiogram)
   - `outbox/` (staged digital messages when using outbox delivery)
 - Use **Preferences → Operator, QRZ, Skywarn & Folders → Download Backup (`.zip`)** before upgrading or moving machines, and **Restore Backup** on the new machine.
-- Never commit `net_logger.db`, `.env`, `radiograms/`, or `outbox/` to Git (all are excluded by `.gitignore`).
+- Never commit `net_logger.db`, `config.txt`, `.env`, `radiograms/`, or `outbox/` to Git (all are excluded by `.gitignore`).
 
 ---
 
@@ -184,7 +184,7 @@ W5CDN Net Logger checks GitHub Releases silently on startup (offline-safe) and d
 
 - **Safety First:** Updates never run silently in the background, refuse to apply while any net session is open (`409 Conflict`), and automatically save a WAL-safe `net_logger.pre_update.bak` SQLite snapshot first.
 - **Git / Source Installs:** Verifies you are on a clean `main`/`master` branch, fast-forwards via `git pull --ff-only`, and syncs Python dependencies (`uv sync` or `.venv` `pip`).
-- **Standalone Portable Bundles (`W5CDN-Net-Logger.exe` / Linux binary):** Downloads the matching release `.zip` and `SHA256SUMS.txt` strictly from official GitHub domains, verifies the SHA-256 digest before extracting, preserves `net_logger.db`, `.env`, `radiograms/`, and `outbox/`, and automatically swaps & relaunches the updated binary.
+- **Standalone Portable Bundles (`W5CDN-Net-Logger.exe` / Linux binary):** Downloads the matching release `.zip` and `SHA256SUMS.txt` strictly from official GitHub domains, verifies the SHA-256 digest before extracting, preserves `net_logger.db`, `config.txt`, `.env`, `radiograms/`, and `outbox/`, and automatically swaps & relaunches the updated binary.
 
 ### Windows Smart App Control & SmartScreen Notes
 

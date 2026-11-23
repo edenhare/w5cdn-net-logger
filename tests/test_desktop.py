@@ -20,6 +20,7 @@ def test_find_available_port_preferred_and_fallback() -> None:
     assert ephemeral > 0
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         blocker.bind(("127.0.0.1", 0))
         blocker.listen(1)
         busy_port = blocker.getsockname()[1]
@@ -41,6 +42,10 @@ def test_wait_for_server_success_retry_and_timeout(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(desktop.time, "sleep", lambda _s: None)
     assert desktop.wait_for_server("http://127.0.0.1:8765", timeout_seconds=2.0) is True
     assert attempts["count"] == 2
+
+    # Dead backend thread aborts immediately without waiting for timeout
+    dead_thread = types.SimpleNamespace(is_alive=lambda: False)
+    assert desktop.wait_for_server("http://127.0.0.1:8765", timeout_seconds=2.0, thread=dead_thread) is False  # type: ignore[arg-type]
 
     def always_fail(url: str, timeout: float = 0.5) -> httpx.Response:
         raise httpx.ConnectError("refused")
@@ -248,7 +253,7 @@ def test_linux_profile_dir_wm_class_and_pywebview_fallback(
     monkeypatch.delenv("APP_BROWSER", raising=False)
     monkeypatch.setattr(desktop, "find_available_port", lambda _h, _p: 8765)
     monkeypatch.setattr(desktop, "start_uvicorn_thread", lambda _h, _p: (DummyServer(), DummyThread()))
-    monkeypatch.setattr(desktop, "wait_for_server", lambda _u: True)
+    monkeypatch.setattr(desktop, "wait_for_server", lambda _u, **_kw: True)
     fake_webview = types.ModuleType("webview")
     fake_webview.create_window = lambda **_kw: types.SimpleNamespace(events=None)
     fake_webview.start = lambda **_kw: (_ for _ in ()).throw(RuntimeError("GTK/WebKit missing"))
@@ -317,13 +322,43 @@ def test_run_app_window_loop(monkeypatch: pytest.MonkeyPatch) -> None:
             self.terminated = True
 
     proc1 = DummyProc()
+    clock = {"now": 100.0}
+
+    def fake_monotonic() -> float:
+        return clock["now"]
+
+    def advance_sleep(_s: float) -> None:
+        clock["now"] += 3.0
+
     monkeypatch.setattr(desktop.subprocess, "Popen", lambda cmd: launched_cmds.append(cmd) or proc1)
-    monkeypatch.setattr(desktop.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(desktop.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(desktop.time, "sleep", advance_sleep)
     srv1, thr1 = DummyServer(), DummyThread()
     assert desktop.run_app_window_loop("http://127.0.0.1:8765", srv1, thr1, browser_exe="msedge.exe") is True  # type: ignore[arg-type]
     assert "--app=http://127.0.0.1:8765" in launched_cmds[0]
     assert srv1.should_exit is True
     assert thr1.joined is True
+
+    # 3b. Browser handoff (immediate exit code 0) keeps server alive until should_exit is set
+    class ImmediateHandoffProc:
+        def poll(self) -> int:
+            return 0
+
+    srv_ho, thr_ho = DummyServer(), DummyThread()
+    handoff_ticks = {"n": 0}
+
+    def handoff_sleep(_s: float) -> None:
+        handoff_ticks["n"] += 1
+        if handoff_ticks["n"] >= 2:
+            srv_ho.should_exit = True
+
+    clock["now"] = 200.0
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda _cmd: ImmediateHandoffProc())
+    monkeypatch.setattr(desktop.time, "sleep", handoff_sleep)
+    assert desktop.run_app_window_loop("http://127.0.0.1:8765", srv_ho, thr_ho, browser_exe="msedge.exe") is True  # type: ignore[arg-type]
+    assert handoff_ticks["n"] == 2
+    assert srv_ho.should_exit is True
+    assert thr_ho.joined is True
 
     # 4. KeyboardInterrupt terminates window process and shuts down cleanly
     proc2 = DummyProc(interrupt=True)
@@ -398,14 +433,16 @@ def test_run_smoke_test_and_main_smoke_flag(tmp_path: Path, monkeypatch: pytest.
 
     monkeypatch.setattr(desktop, "find_available_port", lambda _h, _p: 8765)
     monkeypatch.setattr(desktop, "start_uvicorn_thread", lambda _h, _p: (DummyServer(), DummyThread()))
-    monkeypatch.setattr(desktop, "wait_for_server", lambda _u: True)
+    monkeypatch.setattr(desktop, "wait_for_server", lambda _u, **_kw: True)
     monkeypatch.setattr(desktop, "run_smoke_test", lambda _u, out_path="": True)
     assert desktop.main(["--smoke-test"]) == 0
     monkeypatch.setattr(desktop, "run_smoke_test", lambda _u, out_path="": False)
     assert desktop.main(["--smoke-test"]) == 1
 
 
-def test_main_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(desktop, "BASE_DIR", tmp_path)
+
     class DummyServer:
         should_exit = False
 
@@ -424,16 +461,17 @@ def test_main_paths(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _h, _p: (_ for _ in ()).throw(OSError("cannot bind")),
     )
     assert desktop.main([]) == 1
+    assert "Could not bind" in (tmp_path / "desktop_startup.log").read_text(encoding="utf-8")
 
     # 2. Server fails to start
     monkeypatch.setattr(desktop, "find_available_port", lambda _h, _p: 8765)
     monkeypatch.setattr(desktop, "start_uvicorn_thread", lambda _h, _p: (DummyServer(), DummyThread()))
-    monkeypatch.setattr(desktop, "wait_for_server", lambda _u: False)
+    monkeypatch.setattr(desktop, "wait_for_server", lambda _u, **_kw: False)
     assert desktop.main([]) == 1
 
     # 3. Chromeless --app-window and --chrome mode (success and fallback)
     monkeypatch.delenv("APP_BROWSER", raising=False)
-    monkeypatch.setattr(desktop, "wait_for_server", lambda _u: True)
+    monkeypatch.setattr(desktop, "wait_for_server", lambda _u, **_kw: True)
     app_win_called: dict[str, object] = {"ran": False, "preferred": None}
     monkeypatch.setattr(
         desktop,
