@@ -450,7 +450,7 @@ def _write_standalone_swap_script(
             "  goto wait_exit\r\n"
             ")\r\n"
             'robocopy "%SRC_DIR%" "%DST_DIR%" /E /IS /IT /R:5 /W:1 '
-            '/XF net_logger.db net_logger.db-wal net_logger.db-shm .env *.bak '
+            '/XF net_logger.db net_logger.db-wal net_logger.db-shm config.txt .env *.bak '
             '/XD radiograms outbox _update_staging >NUL\r\n'
             f'if exist "%DST_DIR%\\{exe_name}" start "" "%DST_DIR%\\{exe_name}"\r\n'
             'rmdir /S /Q "%STAGE_ROOT%" >NUL 2>&1\r\n'
@@ -473,7 +473,7 @@ def _write_standalone_swap_script(
         'for item in "$SRC_DIR"/*; do\n'
         '  base="$(basename "$item")"\n'
         '  case "$base" in\n'
-        '    net_logger.db|net_logger.db-wal|net_logger.db-shm|.env|radiograms|outbox|*.bak) continue ;;\n'
+        '    net_logger.db|net_logger.db-wal|net_logger.db-shm|config.txt|.env|radiograms|outbox|*.bak) continue ;;\n'
         '  esac\n'
         '  rm -rf "$DST_DIR/$base"\n'
         '  cp -a "$item" "$DST_DIR/$base"\n'

@@ -27,12 +27,30 @@ if __package__ in {None, ""}:
     if _src_root not in sys.path:
         sys.path.insert(0, _src_root)
 
-from net_logger.app import APP_TITLE, BUNDLE_DIR, app, parse_port, register_shutdown_callback
+from net_logger.app import (
+    APP_TITLE,
+    BASE_DIR,
+    BUNDLE_DIR,
+    app,
+    parse_port,
+    register_shutdown_callback,
+)
 
 logger = logging.getLogger("net_logger.desktop")
 
 APP_USER_MODEL_ID = "W5CDN.NetLogger"
 ICON_ICO_PATH = BUNDLE_DIR / "static" / "icon.ico"
+
+
+def _log_startup(message: str, log_dir: Path | None = None) -> None:
+    """Append a best-effort startup diagnostic line to desktop_startup.log."""
+    try:
+        target = (log_dir or BASE_DIR) / "desktop_startup.log"
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{ts}] {message}\n")
+    except OSError:
+        pass
 
 
 def set_windows_app_id(app_id: str = APP_USER_MODEL_ID) -> bool:
@@ -79,19 +97,30 @@ def apply_windows_taskbar_icon(
 
 
 def find_available_port(host: str, preferred_port: int) -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, preferred_port))
-            return int(sock.getsockname()[1])
-        except OSError:
-            sock.bind((host, 0))
+    def _try_bind(port: int) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            elif sys.platform != "win32":
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
             return int(sock.getsockname()[1])
 
+    try:
+        return _try_bind(preferred_port)
+    except OSError:
+        return _try_bind(0)
 
-def wait_for_server(url: str, timeout_seconds: float = 8.0) -> bool:
+
+def wait_for_server(
+    url: str,
+    timeout_seconds: float = 8.0,
+    thread: threading.Thread | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
+        if thread is not None and not thread.is_alive():
+            return False
         try:
             resp = httpx.get(f"{url}/api/config", timeout=0.5)
             if resp.status_code == 200:
@@ -313,11 +342,21 @@ def run_app_window_loop(
     register_shutdown_callback(lambda: setattr(server, "should_exit", True))
     window_title = APP_TITLE
     icon_applied = False
-    icon_deadline = time.monotonic() + 6.0
+    launched_at = time.monotonic()
+    icon_deadline = launched_at + 6.0
     try:
-        while proc.poll() is None and thread.is_alive() and not server.should_exit:
+        while thread.is_alive() and not server.should_exit:
             if not icon_applied and time.monotonic() < icon_deadline:
                 icon_applied = apply_windows_taskbar_icon(window_title)
+            exit_code = proc.poll()
+            if exit_code is not None:
+                # Chromium/Edge exits immediately with code 0 when handing off --app=
+                # to an already-running browser process. Keep serving until the page's
+                # /api/client/unload callback triggers server.should_exit.
+                if exit_code == 0 and (time.monotonic() - launched_at) < 2.0:
+                    while thread.is_alive() and not server.should_exit:
+                        time.sleep(0.3)
+                break
             time.sleep(0.3)
     except KeyboardInterrupt:
         proc.terminate()
@@ -431,14 +470,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         port = find_available_port(host, args.port)
     except OSError as exc:
-        print(f"Error: Could not bind to local host {host}: {exc}", file=sys.stderr)
+        msg = f"Error: Could not bind to local host {host}: {exc}"
+        _log_startup(msg)
+        print(msg, file=sys.stderr)
         return 1
 
     url = f"http://{host}:{port}"
     server, thread = start_uvicorn_thread(host, port)
-    if not wait_for_server(url):
+    if not wait_for_server(url, thread=thread):
         stop_uvicorn_server(server, thread)
-        print("Error: Local Net Logger backend failed to start.", file=sys.stderr)
+        msg = f"Error: Local Net Logger backend failed to start on {url}."
+        _log_startup(msg)
+        print(msg, file=sys.stderr)
         return 1
 
     if args.smoke_test:
@@ -509,6 +552,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         webview.start(gui=gui, debug=args.debug)
     except (OSError, RuntimeError, ValueError, webview_error) as exc:
         logger.error("Desktop window failed: %s", exc)
+        _log_startup(f"pywebview failed ({exc}); falling back to browser app window on {url}")
         print(
             f"pywebview failed ({exc}); falling back to browser app window.",
             file=sys.stderr,

@@ -86,7 +86,7 @@ def build_bundle() -> Path:
     subprocess.run(cmd, check=True, cwd=str(ROOT_DIR))
 
     # Copy helpful companion files alongside the standalone executable
-    for companion in (".env.example", "README.md"):
+    for companion in ("config.example.txt", ".env.example", "README.md"):
         src = ROOT_DIR / companion
         if src.is_file():
             shutil.copy2(src, target_dir / companion)

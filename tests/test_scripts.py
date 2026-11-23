@@ -42,6 +42,7 @@ def test_build_bundle_archives_linux_and_windows_outputs(
     fake_static.mkdir(parents=True)
     (fake_pkg / "desktop.py").write_text("# stub\n", encoding="utf-8")
     (fake_static / "icon.ico").write_bytes(b"ICO")
+    (tmp_path / "config.example.txt").write_text("PORT=8765\n", encoding="utf-8")
     (tmp_path / ".env.example").write_text("PORT=8765\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# W5CDN Net Logger\n", encoding="utf-8")
 
@@ -75,6 +76,7 @@ def test_build_bundle_archives_linux_and_windows_outputs(
     with zipfile.ZipFile(lin_zip, "r") as zf:
         names = set(zf.namelist())
         assert "W5CDN-Net-Logger/W5CDN-Net-Logger" in names
+        assert "W5CDN-Net-Logger/config.example.txt" in names
         assert "W5CDN-Net-Logger/.env.example" in names
         assert "W5CDN-Net-Logger/README.md" in names
         assert "W5CDN-Net-Logger/run-w5cdn-net-logger.sh" in names

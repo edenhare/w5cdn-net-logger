@@ -64,6 +64,27 @@ def test_load_dotenv_handles_missing_and_unreadable_file(
     net_app.load_dotenv(bad_file)  # must not raise
 
 
+def test_load_config_files_prefers_config_txt_over_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.txt").write_text(
+        "TEST_CFG_SHARED=from_config_txt\nTEST_CFG_ONLY_TXT=yes\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "TEST_CFG_SHARED=from_dotenv\nTEST_CFG_ONLY_ENV=fallback\n",
+        encoding="utf-8",
+    )
+    for key in ("TEST_CFG_SHARED", "TEST_CFG_ONLY_TXT", "TEST_CFG_ONLY_ENV"):
+        monkeypatch.delenv(key, raising=False)
+
+    net_app.load_config_files(tmp_path)
+
+    assert os.environ["TEST_CFG_SHARED"] == "from_config_txt"
+    assert os.environ["TEST_CFG_ONLY_TXT"] == "yes"
+    assert os.environ["TEST_CFG_ONLY_ENV"] == "fallback"
+
+
 def test_config_and_port_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("NET_LOGGER_DB", str(tmp_path / "isolated.db"))
     monkeypatch.setenv("OPERATOR_CALL", "  k5abc ")

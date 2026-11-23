@@ -229,6 +229,7 @@ def test_write_standalone_swap_scripts(tmp_path: Path) -> None:
     assert "TARGET_PID=4321" in bat_text
     assert "robocopy" in bat_text
     assert "net_logger.db" in bat_text
+    assert "config.txt" in bat_text
     assert ".env" in bat_text
     assert "radiograms outbox _update_staging" in bat_text
 
@@ -244,7 +245,7 @@ def test_write_standalone_swap_scripts(tmp_path: Path) -> None:
     assert b"\r\n" not in sh_raw
     sh_text = sh_raw.decode("utf-8")
     assert "TARGET_PID=4321" in sh_text
-    assert "net_logger.db|net_logger.db-wal|net_logger.db-shm|.env|radiograms|outbox|*.bak" in sh_text
+    assert "net_logger.db|net_logger.db-wal|net_logger.db-shm|config.txt|.env|radiograms|outbox|*.bak" in sh_text
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +773,7 @@ def test_real_standalone_swap_script_execution(tmp_path: Path) -> None:
     (app_dir / "app_payload.txt").write_text("v0.1.0", encoding="utf-8")
     (app_dir / "_internal" / "runtime.txt").write_text("old-runtime", encoding="utf-8")
     (app_dir / "net_logger.db").write_text("USER-SQLITE-DB", encoding="utf-8")
+    (app_dir / "config.txt").write_text("OPERATOR_CALL=W5CDN", encoding="utf-8")
     (app_dir / ".env").write_text("QRZ_USER=W5CDN", encoding="utf-8")
     (app_dir / "net_logger.pre_update.bak").write_text("PRE-UPDATE-BAK", encoding="utf-8")
     (app_dir / "radiograms" / "RG-001.txt").write_text("ARRL RADIOGRAM", encoding="utf-8")
@@ -785,6 +787,7 @@ def test_real_standalone_swap_script_execution(tmp_path: Path) -> None:
     (payload_dir / "app_payload.txt").write_text("v0.2.0", encoding="utf-8")
     (payload_dir / "_internal" / "runtime.txt").write_text("new-runtime", encoding="utf-8")
     (payload_dir / "net_logger.db").write_text("OVERWRITTEN-BAD", encoding="utf-8")
+    (payload_dir / "config.txt").write_text("OVERWRITTEN-BAD", encoding="utf-8")
     (payload_dir / ".env").write_text("OVERWRITTEN-BAD", encoding="utf-8")
     (payload_dir / "radiograms" / "RG-001.txt").write_text("OVERWRITTEN-BAD", encoding="utf-8")
 
@@ -828,6 +831,7 @@ def test_real_standalone_swap_script_execution(tmp_path: Path) -> None:
 
     # All user data & backups were preserved intact
     assert (app_dir / "net_logger.db").read_text(encoding="utf-8") == "USER-SQLITE-DB"
+    assert (app_dir / "config.txt").read_text(encoding="utf-8") == "OPERATOR_CALL=W5CDN"
     assert (app_dir / ".env").read_text(encoding="utf-8") == "QRZ_USER=W5CDN"
     assert (app_dir / "net_logger.pre_update.bak").read_text(encoding="utf-8") == "PRE-UPDATE-BAK"
     assert (app_dir / "radiograms" / "RG-001.txt").read_text(encoding="utf-8") == "ARRL RADIOGRAM"
