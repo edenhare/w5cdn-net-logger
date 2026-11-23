@@ -164,13 +164,19 @@ def find_chromium_app_browser(preferred: str | None = None) -> str | None:
 
 
 class DesktopBridge:
-    """JavaScript bridge exposed to the UI when running inside pywebview."""
+    """JavaScript bridge exposed to the UI when running inside pywebview.
+
+    Keep internal attributes underscore-prefixed: pywebview recursively introspects
+    every public attribute on ``js_api`` to expose methods to JavaScript, which causes
+    infinite recursion if a ``webview.Window`` (and its .NET WinForms ``native`` form)
+    is stored as a public attribute.
+    """
 
     def __init__(self) -> None:
-        self.window = None
+        self._window = None
 
     def save_text_file(self, filename: str, content: str, kind: str = "txt") -> dict[str, object]:
-        if self.window is None:
+        if self._window is None:
             return {"saved": False, "error": "Desktop window not ready"}
         try:
             import webview
@@ -185,7 +191,7 @@ class DesktopBridge:
                 "txt": ("Text Files (*.txt)", "All Files (*.*)"),
             }.get(kind.lower(), ("All Files (*.*)",))
 
-            result = self.window.create_file_dialog(
+            result = self._window.create_file_dialog(
                 dialog_type,
                 save_filename=filename,
                 file_types=filters,
@@ -477,6 +483,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     bridge = DesktopBridge()
     window_title = APP_TITLE
+    webview_error = getattr(getattr(webview, "errors", None), "WebViewException", RuntimeError)
+    if not (isinstance(webview_error, type) and issubclass(webview_error, BaseException)):
+        webview_error = RuntimeError
     try:
         window = webview.create_window(
             title=window_title,
@@ -487,7 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             background_color="#0b1017",
             js_api=bridge,
         )
-        bridge.window = window
+        bridge._window = window
         events = getattr(window, "events", None)
         if events is not None:
             if hasattr(events, "closed"):
@@ -498,20 +507,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 events.loaded += lambda: apply_windows_taskbar_icon(window_title)
         gui = "edgechromium" if sys.platform == "win32" else None
         webview.start(gui=gui, debug=args.debug)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, webview_error) as exc:
         logger.error("Desktop window failed: %s", exc)
-        if sys.platform.startswith("linux"):
-            print(
-                f"pywebview failed on Linux ({exc}); falling back to browser app window.",
-                file=sys.stderr,
-            )
-            if run_app_window_loop(url, server, thread):
-                return 0
-            run_browser_loop(url, server, thread)
+        print(
+            f"pywebview failed ({exc}); falling back to browser app window.",
+            file=sys.stderr,
+        )
+        if run_app_window_loop(url, server, thread):
             return 0
-        print(f"Error: Desktop window failed to launch: {exc}", file=sys.stderr)
-        stop_uvicorn_server(server, thread)
-        return 1
+        run_browser_loop(url, server, thread)
+        return 0
     stop_uvicorn_server(server, thread)
     return 0
 

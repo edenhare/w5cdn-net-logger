@@ -70,7 +70,12 @@ def test_desktop_bridge_save_text_file(tmp_path: Path, monkeypatch: pytest.Monke
     fake_webview.FileDialog = types.SimpleNamespace(SAVE=20)
     monkeypatch.setitem(sys.modules, "webview", fake_webview)
 
-    bridge.window = FakeWindow((str(out_csv),))
+    bridge._window = FakeWindow((str(out_csv),))
+    # Regression guard: pywebview recursively introspects all public attributes on js_api;
+    # exposing the Window object publicly triggers infinite recursion on WinForms native properties.
+    public_attrs = [name for name in dir(bridge) if not name.startswith("_")]
+    assert public_attrs == ["save_text_file"]
+
     res_ok = bridge.save_text_file("export.csv", "col1,col2\n1,2\n", "csv")
     assert res_ok == {"saved": True, "path": str(out_csv)}
     assert out_csv.read_text(encoding="utf-8") == "col1,col2\n1,2\n"
@@ -80,18 +85,18 @@ def test_desktop_bridge_save_text_file(tmp_path: Path, monkeypatch: pytest.Monke
     legacy_webview.SAVE_DIALOG = 20
     monkeypatch.setitem(sys.modules, "webview", legacy_webview)
 
-    bridge.window = FakeWindow(str(out_adif))
+    bridge._window = FakeWindow(str(out_adif))
     res_adif = bridge.save_text_file("export.adi", "<EOH>\n", "adif")
     assert res_adif["saved"] is True
     assert out_adif.read_text(encoding="utf-8") == "<EOH>\n"
 
     # 3. Cancelled dialog
-    bridge.window = FakeWindow(None)
+    bridge._window = FakeWindow(None)
     res_cancel = bridge.save_text_file("export.txt", "hello", "txt")
     assert res_cancel == {"saved": False, "cancelled": True}
 
     # 4. Write error handled cleanly
-    bridge.window = FakeWindow(str(tmp_path))  # directory path raises IsADirectoryError/PermissionError
+    bridge._window = FakeWindow(str(tmp_path))  # directory path raises IsADirectoryError/PermissionError
     res_err = bridge.save_text_file("bad.txt", "hello", "txt")
     assert res_err["saved"] is False
     assert "error" in res_err
@@ -500,11 +505,21 @@ def test_main_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(closed_handlers) == 1
     assert started_args[0]["debug"] is True
 
-    # 7. pywebview RuntimeError handled cleanly (returns 1 on Windows, falls back to browser on Linux)
-    fake_webview.start = lambda **_kw: (_ for _ in ()).throw(RuntimeError("WebView2 missing"))
+    # 7. pywebview RuntimeError / WebViewException falls back cleanly to browser app window on all OSes
+    class FakeWebViewException(Exception):
+        pass
+
+    fake_webview.errors = types.SimpleNamespace(WebViewException=FakeWebViewException)
+    fake_webview.start = lambda **_kw: (_ for _ in ()).throw(FakeWebViewException("WebView2 missing"))
     monkeypatch.setattr(desktop.sys, "platform", "win32")
-    assert desktop.main([]) == 1
+    monkeypatch.setattr(desktop, "run_app_window_loop", lambda _u, _s, _t, preferred_browser=None: True)
+    assert desktop.main([]) == 0
+    monkeypatch.setattr(desktop, "run_app_window_loop", lambda _u, _s, _t, preferred_browser=None: False)
+    browser_called["ran"] = False
+    assert desktop.main([]) == 0
+    assert browser_called["ran"] is True
     monkeypatch.setattr(desktop.sys, "platform", "linux")
+    fake_webview.start = lambda **_kw: (_ for _ in ()).throw(RuntimeError("GTK missing"))
     assert desktop.main([]) == 0
 
     # 8. stop_uvicorn_server forces exit if keep-alive socket keeps thread alive
