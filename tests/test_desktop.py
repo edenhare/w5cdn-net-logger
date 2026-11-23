@@ -580,3 +580,28 @@ def test_windows_app_id_and_taskbar_icon(
     monkeypatch.setattr(desktop.ctypes, "windll", broken_windll, raising=False)
     assert desktop.set_windows_app_id() is False
     assert desktop.apply_windows_taskbar_icon("Test Window", ico) is False
+
+
+def test_ensure_stdio_streams_and_consoleless_uvicorn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PyInstaller --windowed builds start with sys.stdout/sys.stderr as None; uvicorn must not crash."""
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    desktop.ensure_stdio_streams()
+    assert sys.stdout is not None
+    assert sys.stderr is not None
+    assert sys.stdout.isatty() is False
+    assert sys.stderr.isatty() is False
+    assert sys.stdout.writable() is True
+    assert sys.stdout.encoding == "utf-8"
+    assert sys.stdout.write("ok") == 2
+    assert sys.stderr.write("err") == 3
+
+    # Verify start_uvicorn_thread succeeds even if stdio starts as None
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(desktop.uvicorn.Server, "run", lambda _self: None)
+    server, thread = desktop.start_uvicorn_thread("127.0.0.1", 0)
+    thread.join(timeout=2.0)
+    assert server.config.log_config is None
+    assert server.config.use_colors is False
+    assert sys.stdout is not None and sys.stderr is not None
