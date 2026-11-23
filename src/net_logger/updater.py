@@ -436,6 +436,7 @@ def _write_standalone_swap_script(
     if plat == "win32":
         script_path = staging_root / "_apply_update.bat"
         exe_name = Path(sys.executable).name if getattr(sys, "frozen", False) else "W5CDN-Net-Logger.exe"
+        log_path = data_dir / "update.log"
         script_text = (
             "@echo off\r\n"
             "setlocal\r\n"
@@ -443,17 +444,29 @@ def _write_standalone_swap_script(
             f'set "SRC_DIR={payload_dir}"\r\n'
             f'set "DST_DIR={data_dir}"\r\n'
             f'set "STAGE_ROOT={staging_root}"\r\n'
+            f'set "LOG_FILE={log_path}"\r\n'
+            'echo [update] Waiting for PID %TARGET_PID% to exit... > "%LOG_FILE%"\r\n'
+            "set /a TRIES=0\r\n"
             ":wait_exit\r\n"
-            'tasklist /FI "PID eq %TARGET_PID%" 2>NUL | find /I "%TARGET_PID%" >NUL\r\n'
+            'tasklist /FI "PID eq %TARGET_PID%" /NH 2>NUL | find /I "%TARGET_PID%" >NUL\r\n'
             "if not errorlevel 1 (\r\n"
-            "  timeout /t 1 /nobreak >NUL\r\n"
-            "  goto wait_exit\r\n"
+            "  set /a TRIES+=1\r\n"
+            "  if %TRIES% LSS 60 (\r\n"
+            "    ping -n 2 127.0.0.1 >NUL\r\n"
+            "    goto wait_exit\r\n"
+            "  )\r\n"
             ")\r\n"
+            'echo [update] PID exited after %TRIES% checks. Copying files... >> "%LOG_FILE%"\r\n'
             'robocopy "%SRC_DIR%" "%DST_DIR%" /E /IS /IT /R:5 /W:1 '
-            '/XF net_logger.db net_logger.db-wal net_logger.db-shm config.txt .env *.bak '
-            '/XD radiograms outbox _update_staging >NUL\r\n'
-            f'if exist "%DST_DIR%\\{exe_name}" start "" "%DST_DIR%\\{exe_name}"\r\n'
-            'rmdir /S /Q "%STAGE_ROOT%" >NUL 2>&1\r\n'
+            '/XF net_logger.db net_logger.db-wal net_logger.db-shm config.txt .env update.log desktop_startup.log *.bak '
+            '/XD radiograms outbox _update_staging >> "%LOG_FILE%" 2>&1\r\n'
+            'echo [update] robocopy exit=%ERRORLEVEL% >> "%LOG_FILE%"\r\n'
+            'cd /d "%DST_DIR%"\r\n'
+            f'if exist "%DST_DIR%\\{exe_name}" (\r\n'
+            f'  echo [update] Relaunching {exe_name}... >> "%LOG_FILE%"\r\n'
+            f'  start "" /D "%DST_DIR%" "%DST_DIR%\\{exe_name}"\r\n'
+            ")\r\n"
+            'start "" /b cmd /c "ping -n 3 127.0.0.1 >NUL & rmdir /S /Q ""%STAGE_ROOT%"" >NUL 2>&1"\r\n'
             "endlocal\r\n"
         )
         script_path.write_text(script_text, encoding="utf-8")
@@ -577,10 +590,15 @@ async def apply_standalone_update(
     if spawn_helper:
         if sys.platform == "win32":
             cmd_bin = shutil.which("cmd.exe") or "cmd.exe"
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
             subprocess.Popen(  # nosec B603
                 [cmd_bin, "/c", str(helper_script)],
                 creationflags=flags,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 close_fds=True,
             )
         else:

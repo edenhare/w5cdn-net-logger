@@ -3233,20 +3233,27 @@ class WindowShutdownManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._callback: Callable[[], None] | None = None
+        self._update_callback: Callable[[], None] | None = None
         self._grace_seconds: float = 4.0
         self._timer: threading.Timer | None = None
+        self._cancellable: bool = True
 
     def register(self, callback: Callable[[], None] | None, grace_seconds: float = 4.0) -> None:
         with self._lock:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            self._cancellable = True
             self._callback = callback
             self._grace_seconds = max(0.05, grace_seconds)
 
+    def register_update(self, callback: Callable[[], None] | None) -> None:
+        with self._lock:
+            self._update_callback = callback
+
     def cancel(self) -> None:
         with self._lock:
-            if self._timer is not None:
+            if self._timer is not None and self._cancellable:
                 self._timer.cancel()
                 self._timer = None
 
@@ -3254,20 +3261,40 @@ class WindowShutdownManager:
         with self._lock:
             if self._callback is None:
                 return False
+            if self._timer is not None and not self._cancellable:
+                return True
             if self._timer is not None:
                 self._timer.cancel()
             cb = self._callback
-            timer = threading.Timer(self._grace_seconds, self._fire, args=(cb,))
+            self._cancellable = True
+            timer = threading.Timer(self._grace_seconds, self._fire, args=(cb, False))
             timer.daemon = True
             self._timer = timer
             timer.start()
             return True
 
-    def _fire(self, callback: Callable[[], None]) -> None:
+    def schedule_update(self, delay_seconds: float = 0.8) -> bool:
+        """Schedule a non-cancellable app exit so a staged standalone update can swap files."""
         with self._lock:
-            if self._callback is not callback:
+            cb = self._update_callback or self._callback
+            if cb is None:
+                return False
+            if self._timer is not None:
+                self._timer.cancel()
+            self._cancellable = False
+            timer = threading.Timer(max(0.05, delay_seconds), self._fire, args=(cb, True))
+            timer.daemon = True
+            self._timer = timer
+            timer.start()
+            return True
+
+    def _fire(self, callback: Callable[[], None], is_update: bool = False) -> None:
+        with self._lock:
+            expected = (self._update_callback or self._callback) if is_update else self._callback
+            if expected is not callback:
                 return
             self._timer = None
+            self._cancellable = True
         callback()
 
 
@@ -3279,6 +3306,10 @@ def register_shutdown_callback(
     grace_seconds: float = 4.0,
 ) -> None:
     shutdown_manager.register(callback, grace_seconds=grace_seconds)
+
+
+def register_update_shutdown_callback(callback: Callable[[], None] | None) -> None:
+    shutdown_manager.register_update(callback)
 
 
 def cancel_pending_shutdown() -> None:
@@ -6589,7 +6620,7 @@ async def apply_app_update() -> dict[str, Any]:
                 status_code=500,
                 detail="A local filesystem error occurred while staging the standalone update.",
             ) from exc
-        shutdown_manager.schedule()
+        shutdown_manager.schedule_update()
         return res
 
     raise HTTPException(

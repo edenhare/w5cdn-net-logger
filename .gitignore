@@ -2,6 +2,7 @@
 .env
 config.txt
 desktop_startup.log
+update.log
 *.db
 *.db-wal
 *.db-shm

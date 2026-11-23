@@ -14,6 +14,11 @@ on:
         required: false
         type: string
         default: ""
+      skip_checks:
+        description: "Skip redundant test/security/UI re-runs when called after a verified Release PR merge"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,6 +31,7 @@ concurrency:
 jobs:
   test:
     name: Pytest (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    if: inputs.skip_checks != true
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -161,6 +167,7 @@ jobs:
 
   security:
     name: Security & Static Analysis (Ruff, Bandit, pip-audit)
+    if: inputs.skip_checks != true
     runs-on: ubuntu-latest
 
     steps:
@@ -285,6 +292,7 @@ jobs:
 
   ui-e2e:
     name: Playwright UI & WCAG (ubuntu-latest / Python 3.12)
+    if: inputs.skip_checks != true
     runs-on: ubuntu-latest
 
     steps:
@@ -372,7 +380,7 @@ jobs:
   all-checks-passed:
     name: Required PR Merge Gate
     needs: [test, security, ui-e2e]
-    if: always()
+    if: always() && inputs.skip_checks != true
     runs-on: ubuntu-latest
     steps:
       - name: Download pytest metrics
@@ -579,7 +587,11 @@ jobs:
   build-standalone:
     name: Build Standalone (${{ matrix.os }})
     needs: [all-checks-passed]
-    if: github.event_name != 'pull_request' || inputs.release_tag != ''
+    if: >-
+      always() &&
+      (needs.all-checks-passed.result == 'success' ||
+       (inputs.skip_checks == true && inputs.release_tag != '')) &&
+      (github.event_name != 'pull_request' || inputs.release_tag != '')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

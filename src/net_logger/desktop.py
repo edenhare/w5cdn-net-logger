@@ -35,6 +35,7 @@ from net_logger.app import (
     app,
     parse_port,
     register_shutdown_callback,
+    register_update_shutdown_callback,
 )
 
 logger = logging.getLogger("net_logger.desktop")
@@ -343,6 +344,7 @@ def stop_uvicorn_server(
 ) -> None:
     """Stop the embedded Uvicorn server cleanly without hanging on keep-alive sockets."""
     register_shutdown_callback(None)
+    register_update_shutdown_callback(None)
     server.should_exit = True
     thread.join(timeout=timeout)
     if thread.is_alive():
@@ -596,6 +598,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             js_api=bridge,
         )
         bridge._window = window
+
+        def _close_for_update() -> None:
+            server.should_exit = True
+            destroy_fn = getattr(window, "destroy", None)
+            if callable(destroy_fn):
+                try:
+                    destroy_fn()
+                except (OSError, RuntimeError, ValueError) as exc:
+                    logger.debug("Window destroy during update restart raised: %s", exc)
+
+        register_update_shutdown_callback(_close_for_update)
         events = getattr(window, "events", None)
         if events is not None:
             if hasattr(events, "closed"):

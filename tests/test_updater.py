@@ -228,6 +228,9 @@ def test_write_standalone_swap_scripts(tmp_path: Path) -> None:
     bat_text = bat.read_text(encoding="utf-8")
     assert "TARGET_PID=4321" in bat_text
     assert "robocopy" in bat_text
+    assert "ping -n 2 127.0.0.1" in bat_text
+    assert "timeout " not in bat_text
+    assert "update.log" in bat_text
     assert "net_logger.db" in bat_text
     assert "config.txt" in bat_text
     assert ".env" in bat_text
@@ -641,10 +644,14 @@ def test_update_endpoints_and_open_net_lock(isolated_client, monkeypatch: pytest
     assert os_err_git.status_code == 500
     assert "secret" not in os_err_git.json()["detail"]
 
-    # Standalone mode: happy path schedules clean shutdown
+    # Standalone mode: happy path schedules non-cancellable update shutdown
     monkeypatch.setattr(net_app.updater, "detect_install_mode", lambda _d: "standalone")
     scheduled: list[bool] = []
-    monkeypatch.setattr(net_app.shutdown_manager, "schedule", lambda: scheduled.append(True))
+    monkeypatch.setattr(
+        net_app.shutdown_manager,
+        "schedule_update",
+        lambda delay_seconds=0.8: scheduled.append(True) or True,
+    )
 
     async def mock_standalone_ok(**_kwargs):
         return {"ok": True, "mode": "standalone", "restart_required": True, "message": "Staged!"}
