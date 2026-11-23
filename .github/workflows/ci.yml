@@ -7,6 +7,13 @@ on:
   pull_request:
     branches: ["main", "master"]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Optional vX.Y.Z tag to build and publish a GitHub Release for"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -29,6 +36,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || '' }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -41,8 +50,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --group dev
 
-      - name: Syntax check Python modules
-        run: uv run --python ${{ matrix.python-version }} python -m py_compile src/net_logger/app.py src/net_logger/desktop.py src/net_logger/updater.py scripts/build_standalone.py scripts/generate_changelog.py
+      - name: Syntax check Python modules & verify version consistency
+        run: |
+          uv run --python ${{ matrix.python-version }} python -m py_compile src/net_logger/app.py src/net_logger/desktop.py src/net_logger/updater.py scripts/build_standalone.py scripts/bump_version.py scripts/generate_changelog.py
+          uv run --python ${{ matrix.python-version }} python scripts/bump_version.py --check
 
       - name: Run full pytest suite (API, security, UI integrity, code quality & >=90% coverage)
         shell: bash
@@ -155,6 +166,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || '' }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -277,6 +290,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || '' }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -361,7 +376,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download pytest metrics
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && inputs.release_tag == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
@@ -369,7 +384,7 @@ jobs:
           path: metrics
 
       - name: Download security metrics
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && inputs.release_tag == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
@@ -377,7 +392,7 @@ jobs:
           path: metrics
 
       - name: Download Playwright UI metrics
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && inputs.release_tag == ''
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
@@ -385,7 +400,7 @@ jobs:
           path: metrics
 
       - name: Post PR check summary & handle opt-in auto-merge
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request' && inputs.release_tag == ''
         continue-on-error: true
         uses: actions/github-script@v9
         env:
@@ -564,7 +579,7 @@ jobs:
   build-standalone:
     name: Build Standalone (${{ matrix.os }})
     needs: [all-checks-passed]
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || inputs.release_tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -574,6 +589,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || '' }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -675,13 +692,16 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [build-standalone]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
     steps:
       - name: Checkout full Git history for automatic changelog generation
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.release_tag || '' }}
           fetch-depth: 0
 
       - name: Download standalone artifacts
@@ -693,7 +713,7 @@ jobs:
       - name: Generate categorized Conventional Commits changelog
         run: |
           python3 scripts/generate_changelog.py \
-            --version "${GITHUB_REF_NAME}" \
+            --version "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --output release-artifacts/CHANGELOG.md
           cat release-artifacts/CHANGELOG.md
@@ -704,7 +724,7 @@ jobs:
           sha256sum W5CDN-Net-Logger-*.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
           {
-            echo "## Release ${GITHUB_REF_NAME}"
+            echo "## Release ${RELEASE_TAG}"
             echo ""
             cat CHANGELOG.md
             echo ""
@@ -717,6 +737,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           body_path: release-artifacts/CHANGELOG.md
           generate_release_notes: true
           files: |
