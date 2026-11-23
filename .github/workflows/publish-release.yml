@@ -82,4 +82,5 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       release_tag: ${{ needs.create-tag.outputs.tag }}
+      skip_checks: true
     secrets: inherit

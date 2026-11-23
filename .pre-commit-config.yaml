@@ -45,7 +45,7 @@ repos:
         language: python
         entry: >-
           python -c "import pathlib, re, sys;
-          bad = [f for f in sys.argv[1:] if re.search(r'(^|/)(\.env|config\.txt|desktop_startup\.log)$|\.(db|db-wal|db-shm|bak)$|(^|/)(radiograms|outbox)/', pathlib.Path(f).as_posix(), re.I)];
+          bad = [f for f in sys.argv[1:] if re.search(r'(^|/)(\.env|config\.txt|desktop_startup\.log|update\.log)$|\.(db|db-wal|db-shm|bak)$|(^|/)(radiograms|outbox)/', pathlib.Path(f).as_posix(), re.I)];
           sys.exit('Blocked sensitive/runtime files: ' + ', '.join(bad)) if bad else None"
         pass_filenames: true
 

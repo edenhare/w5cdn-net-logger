@@ -767,8 +767,19 @@ def test_window_shutdown_manager_and_unload_endpoint(client: TestClient) -> None
         net_app.register_shutdown_callback(None)
         net_app.shutdown_manager._fire(old_cb)
         assert fired["count"] == 1
+
+        # Update shutdown callback fires cleanly and cannot be cancelled by /api/health heartbeats
+        upd_fired = {"count": 0}
+        net_app.register_update_shutdown_callback(
+            lambda: upd_fired.__setitem__("count", upd_fired["count"] + 1)
+        )
+        assert net_app.shutdown_manager.schedule_update(delay_seconds=0.10) is True
+        assert client.get("/api/health").status_code == 200
+        time_mod.sleep(0.18)
+        assert upd_fired["count"] == 1
     finally:
         net_app.register_shutdown_callback(None)
+        net_app.register_update_shutdown_callback(None)
 
 
 # ---------------------------------------------------------------------------
