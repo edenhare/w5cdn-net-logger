@@ -389,6 +389,7 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.fill("#rgHx", "C")
             page.fill("#rgToName", "SECTION TRAFFIC MANAGER")
             page.fill("#rgToCity", "AUSTIN TX 78701")
+            page.fill("#rgToEmail", "stm@example.com")
             page.fill("#rgMessageText", "SEVERE WEATHER NET SECURED X ALL STATIONS SAFE")
             assert page.locator("#rgCheckPreview").inner_text().strip() == "8"
             page.click('#radiogramForm button[type="submit"]')
@@ -396,11 +397,25 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             rg_card = page.locator("#radiogramsList .rg-card", has_text="SECTION TRAFFIC MANAGER")
             rg_card.wait_for(state="visible", timeout=5000)
 
+            # View full formatted ARRL Radiogram message in dedicated View modal
+            rg_card.locator('[data-rg-action="view"]').click()
+            page.locator("#radiogramViewBackdrop").wait_for(state="visible", timeout=5000)
+            page.locator("#rgViewText", has_text="SEVERE WEATHER NET SECURED").wait_for(state="visible", timeout=5000)
+            view_text = page.locator("#rgViewText").inner_text()
+            assert "AUSTIN TX 78701" in view_text
+            assert "BT" in view_text
+            page.locator('#radiogramViewBackdrop [data-close-modal="radiogramViewBackdrop"]').first.click()
+            page.locator("#radiogramViewBackdrop").wait_for(state="hidden", timeout=3000)
+
             rg_card.locator('[data-rg-action="digital"]').click()
             page.locator("#digitalSendBackdrop").wait_for(state="visible", timeout=5000)
             assert page.locator("#digBpqType").input_value() == "ST"
             assert "AUSTIN TX 78701" in page.locator("#digSubject").input_value()
-            page.fill("#digToAddress", "TXNTS")
+            # Packet receiving station ID & SP/ST header line must NOT auto-fill with recipient email address
+            assert "EXAMPLE.COM" not in page.locator("#digPacketToAddress").input_value().upper()
+            pkt_first_line = page.locator("#digPacketPreview").input_value().splitlines()[0].upper()
+            assert "EXAMPLE.COM" not in pkt_first_line
+            page.fill("#digPacketToAddress", "TXNTS")
             page.click("#btnDigSendBpqPacket")
             page.locator("#digBpqTranscript", has_text="Message: 142 Saved").wait_for(state="visible", timeout=5000)
             transcript = page.locator("#digBpqTranscript").inner_text()

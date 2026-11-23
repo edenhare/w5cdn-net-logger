@@ -3002,6 +3002,7 @@
               ${fileName ? `<span style="color:var(--accent-emerald-text);" title="${escHtml(rg.file_path)}">Saved: ${escHtml(fileName)}</span>` : ""}
             </div>
             <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:2px; flex-wrap:wrap;">
+              <button type="button" class="btn btn-primary btn-xs" data-rg-action="view" title="View full formatted ARRL Radiogram message">View</button>
               <button type="button" class="btn btn-xs" data-rg-action="copy">Copy ARRL Text</button>
               <button type="button" class="btn btn-xs" data-rg-action="print">Print Form</button>
               ${(!isCancelled && wlReady) ? `<button type="button" class="btn btn-primary btn-xs" data-rg-action="push-winlink" title="Push directly to your configured Winlink target">⚡ Push Winlink</button>` : ""}
@@ -3038,9 +3039,53 @@
         return null;
       }
 
+      async function openRadiogramViewModal(rg) {
+        if (!rg) return;
+        $("rgViewId").value = String(rg.id);
+        $("rgViewTitle").textContent = `ARRL Radiogram — NR ${rg.msg_number}`;
+        const relaySummary = [
+          rg.received_from ? `Rcvd: ${rg.received_from} ${rg.received_at || ""}`.trim() : "",
+          rg.sent_to ? `Sent: ${rg.sent_to} ${rg.sent_at || ""}`.trim() : "",
+        ].filter(Boolean).join(" • ");
+        $("rgViewMeta").innerHTML = [
+          `<span class="pill prec-${escHtml(rg.precedence)}">${escHtml(rg.precedence)}</span>`,
+          rg.hx ? `<span class="pill mono">${escHtml(rg.hx)}</span>` : "",
+          `<span class="pill pill-rg mono">CK ${escHtml(rg.check_text)}</span>`,
+          `<span class="pill">${escHtml(rg.status)}</span>`,
+          relaySummary ? `<span class="mono" style="color:var(--text-secondary);">${escHtml(relaySummary)}</span>` : "",
+        ].filter(Boolean).join(" ");
+
+        const dr = state.prefs.digital_routing || {};
+        const digEnabled = Boolean(dr.winlink_enabled || dr.packet_enabled);
+        const digBtn = $("btnRgViewDigital");
+        if (digBtn) {
+          digBtn.textContent = (dr.winlink_enabled && dr.packet_enabled)
+            ? "Packet / Winlink"
+            : (dr.winlink_enabled ? "Winlink" : "Packet");
+          digBtn.classList.toggle("hidden", !digEnabled);
+        }
+
+        const notesText = String(rg.notes || "").trim();
+        $("rgViewNotes").textContent = notesText;
+        $("rgViewNotesWrap").classList.toggle("hidden", !notesText);
+        $("rgViewText").textContent = "Loading formatted ARRL Radiogram...";
+        $("radiogramViewBackdrop").classList.remove("hidden");
+
+        try {
+          const resp = await fetch(`/api/radiograms/${rg.id}/text`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          $("rgViewText").textContent = await resp.text();
+        } catch (err) {
+          $("rgViewText").textContent = rg.message_text || "(Unable to load formatted radiogram)";
+          toast(`Could not load radiogram text: ${err.message}`, "error");
+        }
+      }
+
       async function handleRadiogramCardAction(rg, action) {
         if (!rg) return;
-        if (action === "edit") {
+        if (action === "view") {
+          await openRadiogramViewModal(rg);
+        } else if (action === "edit") {
           openRadiogramEditor(rg);
         } else if (action === "book") {
           openRadiogramEditor({
@@ -3784,20 +3829,30 @@
         }
       }
 
+      function isInternetEmailAddress(val) {
+        const cleaned = String(val || "").trim();
+        if (!cleaned || cleaned.includes("#")) return false;
+        if (/\.(NOAM|SOAM|EURO|ASIA|AUST|WW)$/i.test(cleaned)) return false;
+        return /^[^@\s#]+@[^@\s#]+\.[A-Za-z]{2,12}$/.test(cleaned);
+      }
+
       async function refreshDigitalSendModal(opts = {}) {
         const rgId = Number($("digRgId").value);
         if (!rgId) return;
         const toVal = $("digToAddress").value.trim();
+        const pktToVal = $("digPacketToAddress").value.trim();
         const subjVal = opts.resetSubject ? "" : $("digSubject").value.trim();
         const bbsTypeVal = opts.useDefaultType ? "" : ($("digBpqType").value || "");
         const params = new URLSearchParams();
         if (toVal) params.set("to", toVal);
+        if (pktToVal) params.set("packet_to", pktToVal);
         if (subjVal) params.set("subject", subjVal);
         if (bbsTypeVal) params.set("bbs_type", bbsTypeVal);
         const qs = params.toString() ? `?${params.toString()}` : "";
         const data = await api(`/api/radiograms/${rgId}/digital${qs}`);
         state.digitalDispatchData = data;
         if (!toVal && data.suggested_to) $("digToAddress").value = data.suggested_to;
+        if (!pktToVal && data.suggested_packet_to) $("digPacketToAddress").value = data.suggested_packet_to;
         if (!subjVal && data.suggested_subject) {
           $("digSubject").value = data.suggested_subject;
           $("digSubject").dataset.autoSubject = data.suggested_subject;
@@ -3844,6 +3899,8 @@
           webmailBtn.classList.add("hidden");
         }
 
+        $("digPacketToWrap").classList.toggle("hidden", !pktOn && wlOn);
+        $("digWinlinkToWrap").classList.toggle("hidden", !wlOn && pktOn);
         $("digBpqTypeWrap").classList.toggle("hidden", !pktOn);
         $("digWinlinkCol").classList.toggle("hidden", !wlOn && pktOn);
         $("digPacketCol").classList.toggle("hidden", !pktOn && wlOn);
@@ -3871,11 +3928,28 @@
       async function pushRadiogramDirectFromCard(rg, mode) {
         if (!rg) return;
         const dr = state.prefs.digital_routing || {};
-        const dest = (rg.to_email || dr.winlink_to_default || rg.to_name || "").trim();
+        let dest = "";
+        if (mode === "packet") {
+          const sentTo = String(rg.sent_to || "").trim();
+          const defTo = String(dr.winlink_to_default || "").trim();
+          if (sentTo && !/^RMS:/i.test(sentTo) && !isInternetEmailAddress(sentTo)) {
+            dest = sentTo;
+          } else if (defTo && !/^RMS:/i.test(defTo) && !isInternetEmailAddress(defTo)) {
+            dest = defTo;
+          }
+        } else {
+          dest = (rg.to_email || dr.winlink_to_default || rg.to_name || "").trim();
+        }
         if (!dest) {
           await openDigitalSendModal(rg);
-          $("digToAddress").focus();
-          toast("Enter destination address or callsign, then click Push", "info");
+          const targetInput = mode === "packet" ? $("digPacketToAddress") : $("digToAddress");
+          targetInput?.focus();
+          toast(
+            mode === "packet"
+              ? "Enter the Packet receiving station ID (callsign or NTS address), then click Push to Packet BBS"
+              : "Enter destination address or callsign, then click Push",
+            "info"
+          );
           return;
         }
         try {
@@ -3911,6 +3985,7 @@
         if (!rg) return;
         $("digRgId").value = String(rg.id);
         $("digToAddress").value = "";
+        $("digPacketToAddress").value = "";
         $("digSubject").value = "";
         $("digSubject").dataset.autoSubject = "";
         $("digitalSendTitle").textContent = `BBS / Mail Dispatch — NR ${rg.msg_number}`;
@@ -3928,10 +4003,16 @@
       async function sendRadiogramViaBpqTelnet(mode) {
         const rgId = Number($("digRgId").value);
         if (!rgId) return;
-        const toAddr = $("digToAddress").value.trim();
+        const inputEl = mode === "packet" ? $("digPacketToAddress") : $("digToAddress");
+        const toAddr = (inputEl ? inputEl.value : "").trim();
         if (!toAddr) {
-          toast("Enter a destination address or callsign first", "error");
-          $("digToAddress").focus();
+          toast(
+            mode === "packet"
+              ? "Enter a Packet receiving station ID (callsign or NTS address) first"
+              : "Enter a Winlink destination address or callsign first",
+            "error"
+          );
+          inputEl?.focus();
           return;
         }
         const subjectVal = $("digSubject").value.trim();
@@ -4180,8 +4261,9 @@
         closeNetsDrawer();
         [
           "prefsModalBackdrop", "openNetWarnBackdrop", "netModalBackdrop", "editCheckinBackdrop",
-          "quickNoteBackdrop", "radiogramEditorBackdrop", "monthlyReportBackdrop", "panelsModalBackdrop",
-          "netReportBackdrop", "nwsReportBackdrop", "ncsHandoffBackdrop", "digitalSendBackdrop", "shortcutsBackdrop",
+          "quickNoteBackdrop", "radiogramViewBackdrop", "radiogramEditorBackdrop", "monthlyReportBackdrop",
+          "panelsModalBackdrop", "netReportBackdrop", "nwsReportBackdrop", "ncsHandoffBackdrop",
+          "digitalSendBackdrop", "shortcutsBackdrop",
         ].forEach((id) => $(id).classList.add("hidden"));
       }
 
@@ -4189,8 +4271,9 @@
         return [
           "netsDrawerBackdrop",
           "prefsModalBackdrop", "openNetWarnBackdrop", "netModalBackdrop", "editCheckinBackdrop",
-          "quickNoteBackdrop", "radiogramEditorBackdrop", "monthlyReportBackdrop", "panelsModalBackdrop",
-          "netReportBackdrop", "nwsReportBackdrop", "ncsHandoffBackdrop", "digitalSendBackdrop", "shortcutsBackdrop",
+          "quickNoteBackdrop", "radiogramViewBackdrop", "radiogramEditorBackdrop", "monthlyReportBackdrop",
+          "panelsModalBackdrop", "netReportBackdrop", "nwsReportBackdrop", "ncsHandoffBackdrop",
+          "digitalSendBackdrop", "shortcutsBackdrop",
         ].some((id) => !$(id).classList.contains("hidden"));
       }
 
@@ -4415,7 +4498,35 @@
             }
           }
         });
+        $("btnRgViewCopy")?.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText($("rgViewText").textContent || "");
+            toast("Copied ARRL Radiogram text to clipboard", "success");
+          } catch {
+            toast("Could not copy radiogram text", "error");
+          }
+        });
+        $("btnRgViewPrint")?.addEventListener("click", () => {
+          const rg = findRadiogramById(Number($("rgViewId").value));
+          if (rg) printArrlRadiogram(rg);
+        });
+        $("btnRgViewDigital")?.addEventListener("click", async () => {
+          const rg = findRadiogramById(Number($("rgViewId").value));
+          $("radiogramViewBackdrop").classList.add("hidden");
+          if (rg) await openDigitalSendModal(rg);
+        });
+        $("btnRgViewEdit")?.addEventListener("click", () => {
+          const rg = findRadiogramById(Number($("rgViewId").value));
+          $("radiogramViewBackdrop").classList.add("hidden");
+          if (rg) openRadiogramEditor(rg);
+        });
         $("btnDigRefresh").addEventListener("click", () => {
+          refreshDigitalSendModal().catch((err) => toast(err.message, "error"));
+        });
+        $("digPacketToAddress")?.addEventListener("change", () => {
+          refreshDigitalSendModal().catch((err) => toast(err.message, "error"));
+        });
+        $("digToAddress")?.addEventListener("change", () => {
           refreshDigitalSendModal().catch((err) => toast(err.message, "error"));
         });
         $("digBpqType").addEventListener("change", () => {

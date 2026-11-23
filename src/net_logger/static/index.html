@@ -1576,9 +1576,13 @@
         <div id="digNodeSummary" class="nts-history-totals" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>
 
         <div style="display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap;">
-          <div class="field" style="flex:1; min-width:190px;">
-            <label for="digToAddress">To (Callsign, NTS Address, or Winlink Address)</label>
-            <input type="text" id="digToAddress" class="input mono" style="text-transform:uppercase;" placeholder="e.g. W5CDN, 75701@NTSTX, or W5STM@WINLINK.ORG" />
+          <div class="field" id="digPacketToWrap" style="flex:1; min-width:190px;">
+            <label for="digPacketToAddress">Packet Receiving Station ID</label>
+            <input type="text" id="digPacketToAddress" class="input mono" style="text-transform:uppercase;" placeholder="e.g. W5XYZ, TXNTS, or 75701@NTSTX" />
+          </div>
+          <div class="field" id="digWinlinkToWrap" style="flex:1; min-width:190px;">
+            <label for="digToAddress">Winlink / Email Destination</label>
+            <input type="text" id="digToAddress" class="input mono" style="text-transform:uppercase;" placeholder="e.g. W5STM@WINLINK.ORG or recipient@example.com" />
           </div>
           <div class="field" id="digBpqTypeWrap" style="width:175px;">
             <label for="digBpqType">Packet BBS Type</label>
@@ -1747,6 +1751,37 @@
           <button type="submit" class="btn btn-primary">Save Comments</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal: View Full ARRL Radiogram Message -->
+  <div class="modal-backdrop hidden" id="radiogramViewBackdrop">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="rgViewTitle">
+      <div class="modal-header">
+        <h2 id="rgViewTitle">ARRL Radiogram</h2>
+        <button class="btn btn-ghost btn-sm" data-close-modal="radiogramViewBackdrop">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rgViewId" />
+        <div id="rgViewMeta" class="nts-history-totals" style="justify-content:flex-start; flex-wrap:wrap; gap:8px;"></div>
+        <div class="field">
+          <label>Official ARRL Radiogram Message</label>
+          <pre id="rgViewText" class="rg-preview-box" style="margin:0; max-height:360px; overflow:auto; white-space:pre-wrap;"></pre>
+        </div>
+        <div class="field hidden" id="rgViewNotesWrap">
+          <label>Handling &amp; Relay Notes</label>
+          <pre id="rgViewNotes" class="nws-pre-block" style="margin:0; max-height:130px; overflow:auto; white-space:pre-wrap;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary btn-sm" id="btnRgViewCopy">Copy ARRL Text</button>
+          <button type="button" class="btn btn-sm" id="btnRgViewPrint">Print Form</button>
+          <button type="button" class="btn btn-sm hidden" id="btnRgViewDigital">Packet / Winlink</button>
+          <button type="button" class="btn btn-sm" id="btnRgViewEdit">Edit / Relay</button>
+        </div>
+        <button type="button" class="btn" data-close-modal="radiogramViewBackdrop">Close</button>
+      </div>
     </div>
   </div>
 

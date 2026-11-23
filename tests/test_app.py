@@ -2711,8 +2711,26 @@ def test_bpq_telnet_login_and_radiogram_transmit(client: TestClient) -> None:
         ).json()
 
         r_dig = client.get(f"/api/radiograms/{rg['id']}/digital").json()
+        assert r_dig["suggested_to"] == "W5STM@WINLINK.ORG"
+        assert r_dig["suggested_packet_to"] == ""
         assert r_dig["bpq_winlink_command"] == "SP RMS:W5STM@WINLINK.ORG"
-        assert r_dig["bpq_packet_command"] == "SP W5STM@WINLINK.ORG"
+        # Packet BBS command line must never default to the recipient's email address
+        assert r_dig["bpq_packet_command"] == "SP NTS @ W5BBS-1"
+        assert r_dig["packet_text"].splitlines()[0] == "SP NTS @ W5BBS-1"
+
+        # Explicit packet_to sets Packet receiving station ID independently of Winlink email
+        r_dig_pkt = client.get(f"/api/radiograms/{rg['id']}/digital?packet_to=K5REL").json()
+        assert r_dig_pkt["suggested_packet_to"] == "K5REL"
+        assert r_dig_pkt["bpq_packet_command"] == "SP K5REL @ W5BBS-1"
+        assert r_dig_pkt["bpq_winlink_command"] == "SP RMS:W5STM@WINLINK.ORG"
+
+        # Packet send without a receiving station ID must reject (never silently use recipient email)
+        r_pkt_missing = client.post(
+            f"/api/radiograms/{rg['id']}/send-bpq-telnet",
+            json={"mode": "packet", "to_address": "", "mark_sent": False},
+        )
+        assert r_pkt_missing.status_code == 400
+        assert "Receiving station ID" in r_pkt_missing.json()["detail"]
 
         r_send_wl = client.post(
             f"/api/radiograms/{rg['id']}/send-bpq-telnet",
