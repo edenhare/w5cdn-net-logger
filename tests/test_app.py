@@ -745,6 +745,14 @@ def test_window_shutdown_manager_and_unload_endpoint(client: TestClient) -> None
         time_mod.sleep(0.18)
         assert fired["count"] == 0
 
+        # Health endpoint and normal API traffic also cancel stray unload timers (e.g. closed 2nd tab)
+        assert client.post("/api/client/unload").json() == {"scheduled": True}
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.json() == {"ok": True, "version": net_app.APP_VERSION}
+        time_mod.sleep(0.18)
+        assert fired["count"] == 0
+
         # Scheduling twice replaces the earlier timer, and when not cancelled it fires cleanly
         assert client.post("/api/client/unload").json() == {"scheduled": True}
         assert client.post("/api/client/unload").json() == {"scheduled": True}

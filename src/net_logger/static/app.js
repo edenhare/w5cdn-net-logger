@@ -418,12 +418,51 @@
       // -----------------------------------------------------------------------
       // API Helper
       // -----------------------------------------------------------------------
+      let backendOffline = false;
+
+      function setBackendOffline(offline) {
+        const banner = $("backendOfflineBanner");
+        if (offline) {
+          if (!backendOffline) {
+            backendOffline = true;
+            banner?.classList.remove("hidden");
+          }
+        } else if (backendOffline) {
+          backendOffline = false;
+          banner?.classList.add("hidden");
+          toast("Reconnected to local Net Logger backend", "success");
+        }
+      }
+
+      async function checkBackendHealth(manual = false) {
+        try {
+          const resp = await fetch("/api/health", { cache: "no-store" });
+          if (resp.ok) {
+            setBackendOffline(false);
+            if (manual) toast("Local Net Logger backend is online", "success");
+            return true;
+          }
+          setBackendOffline(true);
+          return false;
+        } catch {
+          setBackendOffline(true);
+          return false;
+        }
+      }
+
       async function api(path, options = {}) {
         const opts = {
           headers: { "Content-Type": "application/json", ...(options.headers || {}) },
           ...options,
         };
-        const resp = await fetch(path, opts);
+        let resp;
+        try {
+          resp = await fetch(path, opts);
+        } catch (err) {
+          setBackendOffline(true);
+          throw new Error("Local Net Logger backend is unreachable — please restart the app.");
+        }
+        setBackendOffline(false);
         if (resp.status === 204) return null;
         const isJson = (resp.headers.get("content-type") || "").includes("application/json");
         const body = isJson ? await resp.json() : await resp.text();
@@ -5344,8 +5383,10 @@
             }
           }
         });
-        // Notify local server when window closes (backend uses a short reload grace period)
-        window.addEventListener("pagehide", () => {
+        $("btnRetryBackend")?.addEventListener("click", () => checkBackendHealth(true));
+        // Notify local server when window closes (backend uses a reload grace period)
+        window.addEventListener("pagehide", (e) => {
+          if (e.persisted) return;
           try {
             if (navigator.sendBeacon) {
               navigator.sendBeacon("/api/client/unload", "");
@@ -5407,6 +5448,9 @@
         initDockResizers();
         updateClocks();
         setInterval(updateClocks, 1000);
+        setInterval(() => {
+          if (document.visibilityState !== "hidden") checkBackendHealth(false);
+        }, 10000);
 
         try {
           state.config = await api("/api/config");
