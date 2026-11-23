@@ -5634,6 +5634,37 @@ def build_radiogram_subject(rg: dict[str, Any], bbs_type: str = "SP") -> str:
     return f"{core} CK {check_lbl}"[:60]
 
 
+INTERNET_EMAIL_RE = re.compile(r"^[^@\s#]+@[^@\s#]+\.[A-Za-z]{2,12}$")
+PACKET_HIER_SUFFIXES: tuple[str, ...] = (".NOAM", ".SOAM", ".EURO", ".ASIA", ".AUST", ".WW")
+
+
+def _is_internet_email(value: str) -> bool:
+    """Return True if value looks like an internet/Winlink email address rather than a Packet station ID."""
+    cleaned = (value or "").strip()
+    if not cleaned or "#" in cleaned:
+        return False
+    if cleaned.upper().endswith(PACKET_HIER_SUFFIXES):
+        return False
+    return bool(INTERNET_EMAIL_RE.match(cleaned))
+
+
+def _resolve_packet_station_target(
+    rg: dict[str, Any],
+    routing: dict[str, Any],
+    explicit_to: str = "",
+) -> str:
+    """Resolve Packet BBS receiving station ID (never falling back to recipient email address)."""
+    if explicit_to.strip():
+        return explicit_to.strip().upper()
+    sent_to = str(rg.get("sent_to") or "").strip()
+    if sent_to and not sent_to.upper().startswith("RMS:") and not _is_internet_email(sent_to):
+        return sent_to.upper()
+    default_to = str(routing.get("winlink_to_default") or "").strip()
+    if default_to and not default_to.upper().startswith("RMS:") and not _is_internet_email(default_to):
+        return default_to.upper()
+    return ""
+
+
 def _build_bpq_sp_command(
     mode: str,
     to_address: str,
@@ -5641,12 +5672,12 @@ def _build_bpq_sp_command(
     bbs_type: str = "",
 ) -> tuple[str, str]:
     """Build the LinBPQ BBS 'SP ...' or 'ST ...' command and clean destination for Winlink or Packet BBS."""
-    dest = (
-        to_address.strip()
-        or str(routing.get("winlink_to_default") or "").strip()
-        or "NTS"
-    ).upper()
     if mode == "winlink":
+        dest = (
+            to_address.strip()
+            or str(routing.get("winlink_to_default") or "").strip()
+            or "NTS"
+        ).upper()
         prefix = str(routing.get("bpq_winlink_prefix") or "RMS:").strip().upper()
         if prefix and not dest.startswith(prefix):
             target = f"{prefix}{dest}"
@@ -5654,6 +5685,10 @@ def _build_bpq_sp_command(
             target = dest
         return f"SP {target}", target
 
+    default_pkt = str(routing.get("winlink_to_default") or "").strip()
+    if _is_internet_email(default_pkt) or default_pkt.upper().startswith("RMS:"):
+        default_pkt = ""
+    dest = (to_address.strip() or default_pkt or "NTS").upper()
     verb = _resolve_bpq_bbs_type(bbs_type, routing)
     bbs = str(routing.get("packet_bbs_call") or "").strip().upper()
     if bbs and "@" not in dest:
@@ -5768,12 +5803,7 @@ def format_radiogram_packet_bbs(
     bbs_type: str = "",
 ) -> str:
     """Format an ARRL Radiogram as a Packet BBS SP/ST ... /EX upload block."""
-    target = (
-        to_address.strip()
-        or str(routing.get("winlink_to_default") or "").strip()
-        or str(rg.get("to_name") or "").strip()
-        or "NTS"
-    ).upper()
+    target = _resolve_packet_station_target(rg, routing, to_address) or "NTS"
     resolved_type = _resolve_bpq_bbs_type(bbs_type, routing)
     bbs = str(routing.get("packet_bbs_call") or "").strip().upper()
     sp_line = (
@@ -5790,6 +5820,7 @@ def format_radiogram_packet_bbs(
 async def get_radiogram_digital_payload(
     rg_id: int,
     to: str = Query(default="", max_length=120),
+    packet_to: str = Query(default="", max_length=120),
     subject: str = Query(default="", max_length=120),
     bbs_type: str = Query(default="", max_length=8),
 ) -> dict[str, Any]:
@@ -5801,6 +5832,10 @@ async def get_radiogram_digital_payload(
         or str(routing.get("winlink_to_default") or "").strip()
         or str(rg.get("to_name") or "").strip()
     )
+    explicit_pkt = packet_to.strip() or (
+        to.strip() if (to.strip() and not _is_internet_email(to.strip())) else ""
+    )
+    suggested_packet_to = _resolve_packet_station_target(rg, routing, explicit_pkt)
     resolved_bbs_type = _resolve_bpq_bbs_type(bbs_type, routing)
     suggested_subject = (
         subject.strip().upper()
@@ -5808,12 +5843,13 @@ async def get_radiogram_digital_payload(
     )
     bpq_wl_cmd, _ = _build_bpq_sp_command("winlink", suggested_to, routing)
     bpq_pkt_cmd, _ = _build_bpq_sp_command(
-        "packet", suggested_to, routing, bbs_type=resolved_bbs_type
+        "packet", suggested_packet_to, routing, bbs_type=resolved_bbs_type
     )
     return {
         "radiogram_id": rg["id"],
         "msg_number": rg["msg_number"],
         "suggested_to": suggested_to.upper(),
+        "suggested_packet_to": suggested_packet_to.upper(),
         "suggested_subject": suggested_subject,
         "bbs_type": resolved_bbs_type,
         "routing": routing,
@@ -5826,7 +5862,7 @@ async def get_radiogram_digital_payload(
         "packet_text": format_radiogram_packet_bbs(
             rg,
             routing,
-            to_address=suggested_to,
+            to_address=suggested_packet_to,
             subject=suggested_subject,
             bbs_type=resolved_bbs_type,
         ),
@@ -5868,14 +5904,22 @@ async def send_radiogram_bpq_telnet(
     password = get_effective_bpq_password()
     bbs_cmd = str(routing.get("bpq_bbs_cmd") or "").strip()
 
-    to_addr = (
-        payload.to_address.strip()
-        or str(rg.get("to_email") or "").strip()
-        or str(routing.get("winlink_to_default") or "").strip()
-        or str(rg.get("to_name") or "").strip()
-    )
-    if not to_addr:
-        raise HTTPException(status_code=400, detail="Destination address or callsign is required.")
+    if payload.mode == "packet":
+        to_addr = _resolve_packet_station_target(rg, routing, payload.to_address)
+        if not to_addr:
+            raise HTTPException(
+                status_code=400,
+                detail="Receiving station ID (callsign or NTS packet address) is required for Packet BBS relay.",
+            )
+    else:
+        to_addr = (
+            payload.to_address.strip()
+            or str(rg.get("to_email") or "").strip()
+            or str(routing.get("winlink_to_default") or "").strip()
+            or str(rg.get("to_name") or "").strip()
+        )
+        if not to_addr:
+            raise HTTPException(status_code=400, detail="Destination address or callsign is required.")
 
     resolved_bbs_type = _resolve_bpq_bbs_type(payload.bbs_type, routing)
     sp_cmd, sp_target = _build_bpq_sp_command(
@@ -6027,11 +6071,21 @@ async def push_radiogram_to_digital_target(
 
     # Outbox / drop folder push (local folder or LAN SMB share)
     rg = await get_radiogram(rg_id)
+    resolved_to = (
+        _resolve_packet_station_target(rg, routing, payload.to_address)
+        if mode == "packet"
+        else payload.to_address.strip()
+    )
+    if mode == "packet" and not resolved_to:
+        raise HTTPException(
+            status_code=400,
+            detail="Receiving station ID (callsign or NTS packet address) is required for Packet BBS relay.",
+        )
     staged = await stage_radiogram_to_outbox(
         rg_id,
         DigitalStageRequest(
             format_type=mode,
-            to_address=payload.to_address,
+            to_address=resolved_to,
             subject=payload.subject,
             bbs_type=payload.bbs_type,
         ),
@@ -6040,12 +6094,15 @@ async def push_radiogram_to_digital_target(
     if payload.mark_sent:
         now = utc_now_iso()
         sent_at_fmt = f"{now[:10]} {now[11:16]}Z"
-        dest_label = (
-            payload.to_address.strip()
-            or str(rg.get("to_email") or "").strip()
-            or str(routing.get("winlink_to_default") or "").strip()
-            or mode.upper()
-        ).upper()[:24]
+        if mode == "packet":
+            dest_label = (resolved_to or mode.upper()).upper()[:24]
+        else:
+            dest_label = (
+                resolved_to
+                or str(rg.get("to_email") or "").strip()
+                or str(routing.get("winlink_to_default") or "").strip()
+                or mode.upper()
+            ).upper()[:24]
         note_line = f"[{sent_at_fmt}] RELAYED TO DIGITAL OUTBOX ({mode.upper()}): {staged['filename']}"
         next_notes = _append_radiogram_note(str(rg.get("notes") or ""), note_line)
         with get_db() as conn:
