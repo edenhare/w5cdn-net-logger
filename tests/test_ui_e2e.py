@@ -853,7 +853,11 @@ def test_ui_self_updater_banner_modal_open_net_lock_and_wcag(
 
         page.goto(live_app_server, wait_until="networkidle")
 
-        # 1. Topbar update pill appears automatically on boot and passes WCAG
+        # 1. Topbar running version pill and update pill appear automatically on boot and pass WCAG
+        ver_pill = page.locator("#appVersionPill")
+        ver_pill.wait_for(state="visible", timeout=5000)
+        assert ver_pill.inner_text().strip() == f"v{net_app.APP_VERSION}"
+
         banner = page.locator("#btnUpdateBanner")
         banner.wait_for(state="visible", timeout=5000)
         assert "0.2.0" in banner.inner_text()
@@ -861,9 +865,10 @@ def test_ui_self_updater_banner_modal_open_net_lock_and_wcag(
         wcag_home = axe.run(page, options={"runOnly": {"type": "tag", "values": ["wcag2a", "wcag2aa"]}})
         assert not wcag_home.response.get("violations"), wcag_home.generate_report()
 
-        # 2. Clicking topbar pill opens Preferences -> Application Updates card & passes WCAG
+        # 2. Clicking topbar update pill opens Preferences scrolled directly to Application Updates & passes WCAG
         banner.click()
         page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.locator("#updateSectionCard").wait_for(state="visible", timeout=5000)
         page.locator("#updateReleaseNotes").wait_for(state="visible", timeout=5000)
         assert "GIT CHECKOUT" in page.locator("#updateModePill").inner_text()
         assert "SHA-256 verification" in page.locator("#updateReleaseNotes").inner_text()
@@ -874,6 +879,13 @@ def test_ui_self_updater_banner_modal_open_net_lock_and_wcag(
         wcag_prefs = axe.run(page, options={"runOnly": {"type": "tag", "values": ["wcag2a", "wcag2aa"]}})
         assert not wcag_prefs.response.get("violations"), wcag_prefs.generate_report()
 
+        page.click("#btnCancelPrefsTop")
+        page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=3000)
+
+        # Clicking the running version pill also opens Preferences straight to Application Updates
+        ver_pill.click()
+        page.locator("#prefsModalBackdrop").wait_for(state="visible", timeout=5000)
+        page.locator("#updateSectionCard").wait_for(state="visible", timeout=5000)
         page.click("#btnCancelPrefsTop")
         page.locator("#prefsModalBackdrop").wait_for(state="hidden", timeout=3000)
 
