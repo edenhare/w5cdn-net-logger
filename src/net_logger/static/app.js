@@ -252,7 +252,11 @@
         syncPanelsModalControls(clean);
       }
 
+      let panelLayoutSaveSeq = 0;
+      let panelLayoutSavePromise = Promise.resolve();
+
       async function savePanelLayout(nextLayout, quiet = true) {
+        const saveSeq = ++panelLayoutSaveSeq;
         const prev = sanitizePanelLayout(state.prefs.panel_layout);
         const clean = sanitizePanelLayout(nextLayout);
         state.prefs.panel_layout = clean;
@@ -284,16 +288,24 @@
           loadRoster($("rosterSearch")?.value.trim() || "");
         }
 
-        try {
-          const saved = await api("/api/preferences", {
-            method: "PUT",
-            body: JSON.stringify({ panel_layout: clean }),
+        panelLayoutSavePromise = panelLayoutSavePromise
+          .catch(() => {})
+          .then(async () => {
+            if (saveSeq !== panelLayoutSaveSeq) return;
+            try {
+              const saved = await api("/api/preferences", {
+                method: "PUT",
+                body: JSON.stringify({ panel_layout: clean }),
+              });
+              if (saveSeq !== panelLayoutSaveSeq) return;
+              state.prefs = { ...state.prefs, ...saved };
+              if (!quiet) toast("Panel layout saved", "success");
+            } catch (err) {
+              if (saveSeq !== panelLayoutSaveSeq) return;
+              toast(`Layout save error: ${err.message}`, "error");
+            }
           });
-          state.prefs = { ...state.prefs, ...saved };
-          if (!quiet) toast("Panel layout saved", "success");
-        } catch (err) {
-          toast(`Layout save error: ${err.message}`, "error");
-        }
+        await panelLayoutSavePromise;
       }
 
       function togglePanel(panelKey, forceVisible = null) {
@@ -303,7 +315,9 @@
         next[panelKey] = { ...next[panelKey], visible: willShow };
         savePanelLayout(next, true);
         if (panelKey === "roster" && willShow) {
-          setTimeout(() => $("rosterSearch")?.focus(), 40);
+          setTimeout(() => {
+            if (state.prefs.panel_layout?.roster?.visible) $("rosterSearch")?.focus();
+          }, 40);
         }
       }
 
