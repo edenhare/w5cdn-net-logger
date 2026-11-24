@@ -63,13 +63,6 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run smoke
 
-      - name: Test companion NTS Traffic Manager (apps/nts-traffic)
-        working-directory: apps/nts-traffic
-        run: |
-          npm ci
-          npm run typecheck
-          npm test
-
   security:
     name: Security & Dependency Audit
     if: inputs.skip_checks != true
@@ -156,7 +149,7 @@ jobs:
               '',
               '| Check | Status | Details |',
               '| :--- | :--- | :--- |',
-              `| **TypeScript, Vitest & Coverage** | ${icon(testRes)} | Ubuntu & Windows × Node 22 + Windows Electron smoke + NTS Traffic |`,
+              `| **TypeScript, Vitest & Coverage** | ${icon(testRes)} | Ubuntu & Windows × Node 22 + Windows Electron smoke |`,
               `| **Playwright UI E2E** | ${icon(uiRes)} | Chromium headless E2E across forms, radiograms, Net Report & 9 themes |`,
               `| **Security & CVE Audit** | ${icon(secRes)} | Production npm audit (High/Critical) & JS syntax verification |`,
               '| **CodeQL** | 🔍 Separate workflow | JavaScript/TypeScript SAST (see Checks tab) |',

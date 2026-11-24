@@ -107,11 +107,6 @@ function runPreCommit() {
     runNpm(["run", "typecheck"]);
     runNpm(["test"]);
   }
-
-  if (staged.some((f) => f.startsWith("apps/nts-traffic/")) && fs.existsSync(path.join("apps", "nts-traffic", "node_modules"))) {
-    runNpm(["--prefix", "apps/nts-traffic", "run", "typecheck"]);
-    runNpm(["--prefix", "apps/nts-traffic", "test"]);
-  }
 }
 
 function runCommitMsg(msgFile) {

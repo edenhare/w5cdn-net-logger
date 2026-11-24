@@ -32,10 +32,31 @@ const MIME_TYPES: Record<string, string> = {
 let mainWindow: BrowserWindow | null = null;
 let db: NetLoggerDb | null = null;
 
-function resolveDataDir(): string {
-  if (process.env.NET_LOGGER_DATA_DIR) return path.resolve(process.env.NET_LOGGER_DATA_DIR);
-  if (app.isPackaged) return app.getPath("userData");
-  return process.cwd();
+function resolveDataDir(): { dataDir: string; sharedDir: string | null } {
+  if (process.env.NET_LOGGER_DATA_DIR) {
+    return { dataDir: path.resolve(process.env.NET_LOGGER_DATA_DIR), sharedDir: null };
+  }
+  if (app.isPackaged) {
+    const suiteRoot = process.env.W5CDN_SUITE_DIR
+      ? path.resolve(process.env.W5CDN_SUITE_DIR)
+      : path.join(app.getPath("appData"), "W5CDN");
+    const sharedDir = path.join(suiteRoot, "shared");
+    const suiteAppDir = path.join(suiteRoot, "Net-Logger");
+    const legacyDir = path.join(app.getPath("appData"), "w5cdn-net-logger");
+    // Use W5CDN/Net-Logger by default; seamlessly preserve an existing legacy DB if Net-Logger has none yet
+    const dataDir =
+      !fs.existsSync(path.join(suiteAppDir, "net_logger.db")) && fs.existsSync(path.join(legacyDir, "net_logger.db"))
+        ? legacyDir
+        : suiteAppDir;
+    return { dataDir, sharedDir };
+  }
+  return { dataDir: process.cwd(), sharedDir: null };
+}
+
+if (app.isPackaged && !process.env.NET_LOGGER_DATA_DIR) {
+  const { dataDir } = resolveDataDir();
+  fs.mkdirSync(dataDir, { recursive: true });
+  app.setPath("userData", dataDir);
 }
 
 function resolveStaticDir(): string {
@@ -139,10 +160,18 @@ function registerDesktopIpc(): void {
 
 async function createWindow(): Promise<void> {
   const isSmoke = process.env.NET_LOGGER_SMOKE_TEST === "1";
-  const dataDir = resolveDataDir();
+  const { dataDir, sharedDir } = resolveDataDir();
   fs.mkdirSync(dataDir, { recursive: true });
   loadConfigFile(path.join(dataDir, "config.txt"));
   loadConfigFile(path.join(dataDir, ".env"));
+  if (sharedDir) {
+    fs.mkdirSync(path.join(sharedDir, "radiograms"), { recursive: true });
+    fs.mkdirSync(path.join(sharedDir, "outbox"), { recursive: true });
+    loadConfigFile(path.join(sharedDir, "config.txt"));
+    if (!process.env.RADIOGRAMS_DIR && !fs.existsSync(path.join(dataDir, "radiograms"))) {
+      process.env.RADIOGRAMS_DIR = path.join(sharedDir, "radiograms");
+    }
+  }
 
   const dbPath = process.env.NET_LOGGER_DB
     ? path.resolve(process.env.NET_LOGGER_DB)
