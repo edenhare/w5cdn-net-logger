@@ -10,24 +10,13 @@ update.log
 radiograms/
 outbox/
 
-# Python virtual environments & caches
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.coverage
+# Test & coverage artifacts
+coverage/
 coverage.json
-pytest-results.xml
-ci-metrics.json
-security-metrics.json
-htmlcov/
 
 # Build & packaging artifacts
 build/
 dist/
-*.spec
 release/
 node_modules/
 

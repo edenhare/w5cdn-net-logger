@@ -30,7 +30,7 @@ Use this test plan for every release candidate (`v0.1.0`, `v0.1.1`, `v0.2.0`, et
 | **PF-01** | Fresh Install & First Launch | Extract release `.zip` (or clone repo) into a clean folder and launch (`W5CDN-Net-Logger.exe` / `start.bat` / `start.sh`). | App window opens with title **W5CDN Net Logger**, custom radio taskbar icon, empty state visible, and `net_logger.db` created locally. Zero console errors. | `[ ]` |
 | **PF-02** | Windows SmartScreen / SAC Note | Launch freshly downloaded `W5CDN-Net-Logger.exe` on Windows. | Document exact OS prompt behavior (SmartScreen *More info → Run anyway* vs Smart App Control block) for release notes. | `[ ]` |
 | **PF-03** | Browser Reload Grace Period | Press `Ctrl+R` / `F5` twice quickly in the app window. | Page reloads cleanly; local backend server stays alive and does not exit during reload. | `[ ]` |
-| **PF-04** | Clean Window Exit | Close the app window normally and wait 5 seconds. Check Task Manager / `ps`. | Backend server exits cleanly with no orphaned Python or `W5CDN-Net-Logger` process left running. | `[ ]` |
+| **PF-04** | Clean Window Exit | Close the app window normally and wait 5 seconds. Check Task Manager / `ps`. | Electron app exits cleanly with no orphaned `W5CDN Net Logger` process left running. | `[ ]` |
 
 ---
 

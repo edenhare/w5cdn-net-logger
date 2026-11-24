@@ -1,10 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const candidates = [path.resolve("src", "static"), path.resolve("src", "net_logger", "static")];
-const srcDir = candidates.find((p) => fs.existsSync(p));
-if (!srcDir) {
-  throw new Error("Could not find static UI directory");
+const srcDir = path.resolve("src", "static");
+if (!fs.existsSync(srcDir)) {
+  throw new Error(`Could not find static UI directory at ${srcDir}`);
 }
 const outDir = path.resolve("dist", "static");
 fs.mkdirSync(outDir, { recursive: true });

@@ -41,9 +41,7 @@ function resolveDataDir(): string {
 function resolveStaticDir(): string {
   const packagedDist = path.join(__dirname, "..", "static");
   if (fs.existsSync(packagedDist)) return packagedDist;
-  const srcStatic = path.resolve("src", "static");
-  if (fs.existsSync(srcStatic)) return srcStatic;
-  return path.resolve("src", "net_logger", "static");
+  return path.resolve("src", "static");
 }
 
 function registerAppProtocol(router: ApiRouter, staticDir: string): void {

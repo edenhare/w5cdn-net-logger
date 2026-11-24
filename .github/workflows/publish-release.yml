@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_tag_main:
-        description: "Manually tag and publish the current version on main (leave empty to use pyproject.toml version)"
+        description: "Manually tag and publish the current version on main (leave empty to use package.json version)"
         type: string
         required: false
         default: ""
@@ -25,7 +25,8 @@ jobs:
     name: Create Release Tag on main
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
        (startsWith(github.event.pull_request.head.ref, 'release/v') ||
         contains(github.event.pull_request.labels.*.name, 'release')))
     runs-on: ubuntu-latest
@@ -39,12 +40,17 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Verify version consistency and push release tag
         id: tag
         env:
           OVERRIDE_VER: ${{ inputs.confirm_tag_main }}
         run: |
-          CURRENT_VER="$(python3 scripts/bump_version.py --check)"
+          CURRENT_VER="$(node scripts/bump-version.mjs --check)"
           if [ -n "${OVERRIDE_VER}" ]; then
             CLEAN_OVERRIDE="${OVERRIDE_VER#v}"
             if [ "${CLEAN_OVERRIDE}" != "${CURRENT_VER}" ]; then
