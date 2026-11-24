@@ -1936,7 +1936,7 @@ tbody td {
 .col-traffic { width: 78px; }
 .col-sig { width: 68px; }
 .col-comments { width: auto; }
-.col-actions { width: 154px; text-align: right; }
+.col-actions { width: 172px; text-align: right; padding-right: 24px; }
 
 table.wrap-comments tbody td.col-comments {
   white-space: pre-wrap;

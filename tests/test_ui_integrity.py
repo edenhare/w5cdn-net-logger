@@ -176,6 +176,19 @@ def test_no_hardcoded_colors_outside_theme_definitions() -> None:
     assert not rgba_colors, f"Hardcoded rgb/rgba colors outside theme blocks: {rgba_colors}"
 
 
+def test_checkin_actions_column_has_right_edge_padding() -> None:
+    """Issue #42: ensure check-in row delete '✕' button has clear right-edge padding."""
+    style = STYLES_CSS.read_text(encoding="utf-8")
+    match = re.search(r"\.col-actions\s*\{([^}]+)\}", style)
+    assert match is not None, "Missing .col-actions CSS rule in styles.css"
+    rule_body = match.group(1)
+    pad_match = re.search(r"padding-right\s*:\s*(\d+)px", rule_body)
+    assert pad_match is not None, ".col-actions must define explicit right-edge padding-right"
+    assert int(pad_match.group(1)) >= 20, "Expected at least 20px right padding on .col-actions"
+    width_match = re.search(r"width\s*:\s*(\d+)px", rule_body)
+    assert width_match is not None and int(width_match.group(1)) >= 168
+
+
 def test_linux_shell_scripts_use_lf_line_endings() -> None:
     for rel in ("start.sh", "scripts/install_linux_desktop.sh"):
         script_path = PROJECT_ROOT / rel
