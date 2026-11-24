@@ -13,6 +13,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 PYPROJECT_VER_RE = re.compile(r'^(version\s*=\s*")(\d+\.\d+\.\d+)(")$', re.MULTILINE)
+PACKAGE_JSON_VER_RE = re.compile(r'^(\s*"version"\s*:\s*")(\d+\.\d+\.\d+)(")', re.MULTILINE)
+ELECTRON_VER_RE = re.compile(r'^(export const APP_VERSION\s*=\s*")(\d+\.\d+\.\d+)(";)$', re.MULTILINE)
 APP_VER_RE = re.compile(r'^(APP_VERSION\s*=\s*")(\d+\.\d+\.\d+)(")$', re.MULTILINE)
 APP_JS_STATE_RE = re.compile(r'(config:\s*\{[^}\n]*\bversion:\s*")(\d+\.\d+\.\d+)(")')
 APP_JS_FALLBACK_RE = re.compile(r'(state\.config\?\.version\s*\|\|\s*")(\d+\.\d+\.\d+)(")')
@@ -46,7 +48,7 @@ def compute_next_version(current: str, bump: BumpKind) -> str:
 
 
 def _version_targets(root_dir: Path) -> list[tuple[Path, list[tuple[str, re.Pattern[str]]]]]:
-    return [
+    targets: list[tuple[Path, list[tuple[str, re.Pattern[str]]]]] = [
         (root_dir / "pyproject.toml", [("pyproject.toml version", PYPROJECT_VER_RE)]),
         (root_dir / "src" / "net_logger" / "app.py", [("app.py APP_VERSION", APP_VER_RE)]),
         (
@@ -61,6 +63,13 @@ def _version_targets(root_dir: Path) -> list[tuple[Path, list[tuple[str, re.Patt
             [("index.html updateVersionPill", INDEX_HTML_PILL_RE)],
         ),
     ]
+    pkg_json = root_dir / "package.json"
+    if pkg_json.is_file():
+        targets.append((pkg_json, [("package.json version", PACKAGE_JSON_VER_RE)]))
+    electron_defaults = root_dir / "src" / "electron" / "shared" / "defaults.ts"
+    if electron_defaults.is_file():
+        targets.append((electron_defaults, [("defaults.ts APP_VERSION", ELECTRON_VER_RE)]))
+    return targets
 
 
 def read_versions(root_dir: Path = ROOT_DIR) -> dict[str, str]:

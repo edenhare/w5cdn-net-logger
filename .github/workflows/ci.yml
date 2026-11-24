@@ -377,9 +377,49 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  electron-test:
+    name: Electron & TypeScript (${{ matrix.os }})
+    if: inputs.skip_checks != true
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || '' }}
+
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install root Electron & TypeScript dependencies
+        run: npm ci
+
+      - name: Typecheck & Vitest coverage gate (W5CDN Net Logger Electron)
+        run: |
+          npm run typecheck
+          npm run test:cov
+
+      - name: Real Electron GUI smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: npm run smoke
+
+      - name: Test standalone NTS Traffic Manager (apps/nts-traffic)
+        working-directory: apps/nts-traffic
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
   all-checks-passed:
     name: Required PR Merge Gate
-    needs: [test, security, ui-e2e]
+    needs: [test, security, ui-e2e, electron-test]
     if: always() && inputs.skip_checks != true
     runs-on: ubuntu-latest
     steps:
@@ -415,6 +455,7 @@ jobs:
           TEST_RESULT: ${{ needs.test.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           UI_E2E_RESULT: ${{ needs.ui-e2e.result }}
+          ELECTRON_RESULT: ${{ needs.electron-test.result }}
         with:
           script: |
             const fs = require('fs');
@@ -436,7 +477,8 @@ jobs:
             const testRes = process.env.TEST_RESULT;
             const secRes = process.env.SECURITY_RESULT;
             const uiRes = process.env.UI_E2E_RESULT;
-            const allPassed = testRes === 'success' && secRes === 'success' && uiRes === 'success';
+            const electronRes = process.env.ELECTRON_RESULT;
+            const allPassed = testRes === 'success' && secRes === 'success' && uiRes === 'success' && electronRes === 'success';
             const ciMetrics = readJson('ci-metrics.json');
             const secMetrics = readJson('security-metrics.json');
             const uiMetrics = readJson('ui-e2e-metrics.json');
@@ -529,6 +571,7 @@ jobs:
               '| :--- | :--- | :--- |',
               `| **Pytest Suite** | ${icon(testRes)} | ${testDetail} |`,
               `| **Test Coverage** | ${icon(testRes)} | ${covDetail} |`,
+              `| **Electron & TypeScript** | ${icon(electronRes)} | Ubuntu & Windows — tsc, Vitest coverage, Windows Electron smoke, NTS Traffic |`,
               `| **Playwright UI & WCAG** | ${icon(uiRes)} | ${uiDetail} |`,
               `| **Ruff Lint** | ${ruffLine} | Static lint & bug checks |`,
               `| **Bandit SAST** | ${banditLine} | Python security scan (Medium/High) |`,
@@ -582,7 +625,11 @@ jobs:
             echo "Playwright UI & WCAG suite failed (${{ needs.ui-e2e.result }}). Blocking merge."
             exit 1
           fi
-          echo "All cross-platform pytest tests, Playwright UI & WCAG tests, security scans, and coverage gates passed."
+          if [ "${{ needs.electron-test.result }}" != "success" ]; then
+            echo "Electron & TypeScript suite failed (${{ needs.electron-test.result }}). Blocking merge."
+            exit 1
+          fi
+          echo "All cross-platform pytest, Electron/TypeScript, Playwright UI & WCAG, security, and coverage gates passed."
 
   build-standalone:
     name: Build Standalone (${{ matrix.os }})

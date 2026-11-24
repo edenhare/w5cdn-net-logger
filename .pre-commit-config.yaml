@@ -58,6 +58,38 @@ repos:
         pass_filenames: false
         files: ^(src/net_logger/.*|start\.sh|scripts/install_linux_desktop\.sh|tests/test_(ui_integrity|code_quality)\.py)$
 
+      - id: electron-typecheck-and-test
+        name: Electron TypeScript typecheck & Vitest unit suite
+        language: python
+        entry: >-
+          python -c "import os, shutil, subprocess, sys;
+          env = os.environ.copy();
+          env['PATH'] = r'C:\Program Files\nodejs;' + env.get('PATH', '');
+          npm = shutil.which('npm.cmd', path=env['PATH']) or shutil.which('npm', path=env['PATH']);
+          sys.exit(0) if not npm or not os.path.isdir('node_modules') else None;
+          r1 = subprocess.run([npm, 'run', 'typecheck'], env=env);
+          sys.exit(r1.returncode) if r1.returncode else None;
+          r2 = subprocess.run([npm, 'test'], env=env);
+          sys.exit(r2.returncode)"
+        pass_filenames: false
+        files: ^(src/electron/.*|tests/electron/.*|package\.json|tsconfig\.json|vitest\.config\.ts)$
+
+      - id: nts-traffic-typecheck-and-test
+        name: NTS Traffic Manager TypeScript typecheck & Vitest suite
+        language: python
+        entry: >-
+          python -c "import os, shutil, subprocess, sys;
+          env = os.environ.copy();
+          env['PATH'] = r'C:\Program Files\nodejs;' + env.get('PATH', '');
+          npm = shutil.which('npm.cmd', path=env['PATH']) or shutil.which('npm', path=env['PATH']);
+          sys.exit(0) if not npm or not os.path.isdir('apps/nts-traffic/node_modules') else None;
+          r1 = subprocess.run([npm, 'run', 'typecheck'], cwd='apps/nts-traffic', env=env);
+          sys.exit(r1.returncode) if r1.returncode else None;
+          r2 = subprocess.run([npm, 'test'], cwd='apps/nts-traffic', env=env);
+          sys.exit(r2.returncode)"
+        pass_filenames: false
+        files: ^apps/nts-traffic/.*$
+
       - id: conventional-commit
         name: Validate Conventional Commit message
         language: python
