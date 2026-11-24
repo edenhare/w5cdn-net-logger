@@ -2764,6 +2764,27 @@ def _extract_event_location(lines_list: list[str], fallback_location: str) -> tu
     return (found_loc or fallback_location), cleaned_lines
 
 
+NWS_BODY_RE = re.compile(r"^(?:\[WX\]\s*)?NWS\s*:", re.IGNORECASE)
+COMPACT_UTC_RE = re.compile(r"^(\d{2}):?(\d{2})Z?$", re.IGNORECASE)
+
+
+def _radiogram_time_hhmm(rg: dict[str, Any]) -> tuple[str, int | None]:
+    """Extract a (HH:MMZ, minutes_since_midnight) tuple from a radiogram's received/filed/created time."""
+    for field in ("received_at", "time_filed", "created_at"):
+        raw = str(rg.get(field) or "").strip()
+        if not raw:
+            continue
+        m = COMPACT_UTC_RE.match(raw)
+        if m:
+            hh, mm = int(m.group(1)), int(m.group(2))
+            if 0 <= hh <= 23 and 0 <= mm <= 59:
+                return f"{hh:02d}:{mm:02d}Z", hh * 60 + mm
+        hhmm, mins = _iso_to_hhmm(raw)
+        if mins is not None:
+            return hhmm, mins
+    return "--:--Z", None
+
+
 def _extract_station_report_events(
     net: dict[str, Any],
     checkins: list[dict[str, Any]],
@@ -2793,15 +2814,20 @@ def _extract_station_report_events(
         callsign = (c.get("callsign") or "").strip().upper()
         fallback_time, fallback_mins = _iso_to_hhmm(c.get("checked_in_at", ""))
         fallback_loc = _default_station_location(c)
+        station_has_traffic = bool(c.get("has_traffic"))
 
         if not effective_comment:
             seq += 1
             events.append(
                 {
                     "sort_key": (_sort_minutes(fallback_mins), seq),
+                    "sort_mins": _sort_minutes(fallback_mins),
                     "time_label": fallback_time,
                     "location": fallback_loc,
+                    "custom_location": "",
                     "callsign": callsign,
+                    "has_traffic": station_has_traffic,
+                    "is_first_for_checkin": True,
                     "body_lines": ["(Traffic flagged — no comment text recorded)"],
                 }
             )
@@ -2826,6 +2852,7 @@ def _extract_station_report_events(
             else:
                 grouped_events.append((fallback_time, fallback_mins, [stripped]))
 
+        first_for_station = True
         for ev_time, ev_mins, body_raw in grouped_events:
             seq += 1
             ev_call = callsign
@@ -2837,15 +2864,25 @@ def _extract_station_report_events(
                     remainder = first_line[cm.end() :].strip()
                     body_raw = ([remainder] if remainder else []) + body_raw[1:]
             ev_loc, ev_body = _extract_event_location(body_raw, fallback_loc)
+            custom_loc = ev_loc if ev_loc != fallback_loc and ev_loc != "Location N/A" else ""
+            if ev_body and NWS_BODY_RE.match(ev_body[0]):
+                ev_call = "NWS"
+            is_nws = ev_call == "NWS"
             events.append(
                 {
                     "sort_key": (_sort_minutes(ev_mins), seq),
+                    "sort_mins": _sort_minutes(ev_mins),
                     "time_label": ev_time,
                     "location": ev_loc,
+                    "custom_location": custom_loc,
                     "callsign": ev_call,
+                    "has_traffic": station_has_traffic and not is_nws,
+                    "is_first_for_checkin": first_for_station and not is_nws,
                     "body_lines": ev_body,
                 }
             )
+            if not is_nws:
+                first_for_station = False
 
     events.sort(key=lambda item: item["sort_key"])
     return events
@@ -2939,70 +2976,108 @@ def _format_station_comment_events_block(
     return out
 
 
-def _format_checkin_traffic_lines(
-    checkin: dict[str, Any],
+def _format_chronological_checkin_log(
+    net: dict[str, Any],
+    checkins: list[dict[str, Any]],
+    report_events: list[dict[str, Any]],
+    radiograms: list[dict[str, Any]] | None = None,
     *,
     max_width: int = 88,
 ) -> list[str]:
-    """Format traffic/comment lines underneath a check-in row, aligned to UTC (col 5) or CALLSIGN (col 15)."""
-    utc_indent = " " * 5
-    call_indent = " " * 15
-    wrap_w = max(36, max_width - len(call_indent))
-    station_call = (checkin.get("callsign") or "").strip().upper()
-    races_tag = f"[RACES:{checkin['races_id']}] " if checkin.get("races_id") else ""
-    traffic_tag = "[TFC] " if checkin.get("has_traffic") else ""
+    """Build a unified chronological running log of check-ins, traffic/messages, NWS updates, and radiograms."""
+    _, net_start_mins = _iso_to_hhmm(net.get("started_at", ""))
+    msg_indent = " " * 29
+    wrap_w = max(36, max_width - len(msg_indent))
 
-    raw_lines = [
-        ln.strip()
-        for ln in (checkin.get("comments") or "").splitlines()
-        if ln.strip() and ln.strip() != "Net Control Station (NCS)"
-    ]
+    def _sort_minutes(mins: int | None) -> int:
+        if mins is None:
+            return 99999
+        if net_start_mins is not None and mins + 360 < net_start_mins:
+            return mins + 1440
+        return mins
 
-    if not raw_lines:
-        if not (races_tag or traffic_tag):
-            return []
-        fallback = "(Traffic flagged — no comment text recorded)" if traffic_tag else ""
-        text = f"{races_tag}{traffic_tag}{fallback}".strip()
-        return [
-            f"{call_indent}{chunk}"
-            for chunk in (
-                textwrap.wrap(text, width=wrap_w, break_long_words=False, break_on_hyphens=False)
-                or [text]
+    def _wrap_event_rows(time_lbl: str, call_lbl: str, paragraphs: list[str]) -> list[str]:
+        first_prefix = f"     {time_lbl:<8}  {call_lbl[:12]:<12}  "
+        rows: list[str] = []
+        first_emitted = False
+        for para in paragraphs or [""]:
+            chunks = (
+                textwrap.wrap(
+                    para,
+                    width=wrap_w,
+                    break_long_words=False,
+                    break_on_hyphens=False,
+                )
+                or [""]
             )
-        ]
-
-    out: list[str] = []
-    prefix_pending = f"{races_tag}{traffic_tag}"
-    for stripped in raw_lines:
-        ev_time = ""
-        body = stripped
-        m = EVENT_TIME_RE.match(stripped)
-        if m:
-            hh, mm = int(m.group(1)), int(m.group(2))
-            if 0 <= hh <= 23 and 0 <= mm <= 59:
-                ev_time = f"{hh:02d}:{mm:02d}Z"
-                body = stripped[m.end() :].strip()
-                # Strip redundant leading station callsign already shown on the row above
-                if station_call:
-                    cm = EVENT_CALL_RE.match(body)
-                    if cm and cm.group(1).upper() == station_call:
-                        body = body[cm.end() :].strip()
-
-        if prefix_pending:
-            body = f"{prefix_pending}{body}".strip()
-            prefix_pending = ""
-
-        chunks = (
-            textwrap.wrap(body, width=wrap_w, break_long_words=False, break_on_hyphens=False)
-            or [""]
-        )
-        if ev_time:
-            out.append(f"{utc_indent}{ev_time:<8}  {chunks[0]}".rstrip())
-            for cont in chunks[1:]:
-                out.append(f"{call_indent}{cont}".rstrip())
-        else:
             for chunk in chunks:
-                out.append(f"{call_indent}{chunk}".rstrip())
+                prefix = first_prefix if not first_emitted else msg_indent
+                rows.append(f"{prefix}{chunk}".rstrip())
+                first_emitted = True
+        return rows
+
+    timeline: list[tuple[tuple[int, int, int], list[str]]] = []
+    seq = 0
+
+    # 1. Numbered station check-ins (priority 0 so same-minute check-in precedes its traffic/notes)
+    for idx, c in enumerate(checkins, start=1):
+        seq += 1
+        time_hhmm, ci_mins = _iso_to_hhmm(c.get("checked_in_at", ""))
+        display_time = time_hhmm if ci_mins is not None else ""
+        races_suffix = f" [RACES:{c['races_id']}]" if c.get("races_id") else ""
+        row = (
+            f"{idx:>3}  {display_time:<8}  {c['callsign']:<12}  {c['name'][:18]:<18}  "
+            f"{c['qth'][:20]:<20}  {c['status']:<11}{races_suffix}"
+        ).rstrip()
+        timeline.append(((_sort_minutes(ci_mins), 0, seq), [row]))
+
+    # 2. Timestamped station messages, traffic reports, and pulled NWS updates (priority 1)
+    for ev in report_events:
+        seq += 1
+        ev_call = str(ev.get("callsign") or "")
+        time_lbl = str(ev.get("time_label") or "--:--Z")
+        paragraphs = [ln.strip() for ln in (ev.get("body_lines") or []) if ln.strip()]
+        if not paragraphs:
+            paragraphs = [""]
+        if ev.get("has_traffic") and ev.get("is_first_for_checkin") and not paragraphs[0].startswith("[TFC]"):
+            paragraphs[0] = f"[TFC] {paragraphs[0]}".strip()
+        custom_loc = str(ev.get("custom_location") or "").strip()
+        if custom_loc:
+            paragraphs[-1] = f"{paragraphs[-1]} — {custom_loc}" if paragraphs[-1] else custom_loc
+        sort_mins = int(ev.get("sort_mins", 99999))
+        timeline.append(((sort_mins, 1, seq), _wrap_event_rows(time_lbl, ev_call, paragraphs)))
+
+    # 3. ARRL Radiograms received during the net (priority 2)
+    for rg in radiograms or []:
+        seq += 1
+        time_lbl, rg_mins = _radiogram_time_hhmm(rg)
+        rg_call = (
+            str(rg.get("received_from") or "").strip().upper()
+            or str(rg.get("station_of_origin") or "").strip().upper()
+            or "NTS"
+        )
+        msg_num = str(rg.get("msg_number") or "").strip()
+        prec = str(rg.get("precedence") or "R").strip()
+        to_name = str(rg.get("to_name") or "").strip()
+        ck_text = str(rg.get("check_text") or "").strip()
+        rg_status = str(rg.get("status") or "").strip()
+        header = f"[RADIOGRAM NR {msg_num} | {prec}]"
+        if to_name:
+            header += f" TO: {to_name}"
+        if ck_text:
+            header += f" (CK {ck_text})"
+        if rg_status:
+            header += f" [{rg_status}]"
+        paragraphs = [header]
+        msg_body = str(rg.get("message_text") or "").strip()
+        if msg_body:
+            paragraphs.extend([ln.strip() for ln in msg_body.splitlines() if ln.strip()])
+        timeline.append(((_sort_minutes(rg_mins), 2, seq), _wrap_event_rows(time_lbl, rg_call, paragraphs)))
+
+    timeline.sort(key=lambda item: item[0])
+    out: list[str] = []
+    for _, rows in timeline:
+        out.extend(rows)
     return out
 
 
@@ -3068,6 +3143,25 @@ def build_summary_export(
         )
 
     report_events = _extract_station_report_events(net, checkins)
+
+    lines.extend(
+        [
+            "",
+            "CHECK-IN LOG",
+            f"{'#':>3}  {'UTC':<8}  {'CALLSIGN':<12}  {'NAME / EVENT':<18}  {'QTH / DETAILS':<20}  {'STATUS':<11}",
+            "-" * 88,
+        ]
+    )
+    lines.extend(
+        _format_chronological_checkin_log(
+            net,
+            checkins,
+            report_events,
+            rg_list,
+            max_width=88,
+        )
+    )
+
     if report_events:
         lines.extend(
             [
@@ -3077,22 +3171,6 @@ def build_summary_export(
             ]
         )
         lines.extend(_format_station_comment_events_block(report_events, max_width=88))
-
-    lines.extend(
-        [
-            "",
-            "CHECK-IN LOG",
-            f"{'#':>3}  {'UTC':<8}  {'CALLSIGN':<12}  {'NAME':<18}  {'QTH':<20}  {'STATUS':<11}",
-            "-" * 88,
-        ]
-    )
-    for idx, c in enumerate(checkins, start=1):
-        time_hhmm = c["checked_in_at"][11:16] + "Z" if len(c["checked_in_at"]) >= 16 else ""
-        lines.append(
-            f"{idx:>3}  {time_hhmm:<8}  {c['callsign']:<12}  {c['name'][:18]:<18}  "
-            f"{c['qth'][:20]:<20}  {c['status']:<11}".rstrip()
-        )
-        lines.extend(_format_checkin_traffic_lines(c, max_width=88))
 
     if rg_list:
         lines.append("")

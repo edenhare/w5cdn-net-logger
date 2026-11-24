@@ -1505,12 +1505,15 @@ def test_net_report_stats_and_attributed_announcements(client: TestClient) -> No
     assert "Field Day planning meeting Saturday 0900 local." in txt
     assert "STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)" in txt
 
-    # Extract only the comments/weather section to verify strict format (time, location, callsign ONLY)
-    section = txt.split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[1].split("CHECK-IN LOG")[0]
+    # CHECK-IN LOG appears BEFORE STATION COMMENTS & WEATHER REPORTS (Issue #48)
+    assert txt.index("CHECK-IN LOG") < txt.index("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")
+
+    # Extract only the comments/weather section to verify strict format (time, callsign, message — location)
+    section = txt.split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[1]
     assert "Wayne T Hoskins" not in section
     assert "Jack E Malone" not in section
     assert "Sarah Spotter" not in section
-    assert "[LOC:" not in section  # extracted into header, not duplicated in body
+    assert "[LOC:" not in section  # extracted into location suffix, not duplicated in body
 
     h_af5jm = "16:08Z | AF5JM    | (Traffic flagged — no comment text recorded) — Whitehouse, TX"
     h_hail = (
@@ -1524,22 +1527,57 @@ def test_net_report_stats_and_attributed_announcements(client: TestClient) -> No
     assert h_flood in section
     assert h_wind in section
 
-    # Check-In Log places traffic/comments below the callsign aligned to UTC (col 5) or CALLSIGN (col 15)
-    checkin_log = txt.split("CHECK-IN LOG")[1]
-    assert "\n     16:12Z    [TFC] [LOC: Hwy 69 & Loop 49] [HAIL] Quarter size hail" in checkin_log
-    assert "\n               Moving NE at 25 mph" in checkin_log
-    assert "\n     16:25Z    [WIND] 55 mph gusts" in checkin_log
-    assert "\n               [TFC] (Traffic flagged — no comment text recorded)" in checkin_log
+    # Check-In Log is a unified chronological running timeline repeating CALLSIGN at col 15 & message at col 29
+    checkin_log = txt.split("CHECK-IN LOG")[1].split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[0]
+    row_wm5q_ci = "16:05Z    WM5Q          Wayne T Hoskins"
+    row_k5wx_ci = "16:07Z    K5WX          Sarah Spotter"
+    row_af5jm_ci = "16:08Z    AF5JM         Jack E Malone"
+    row_af5jm_tfc = "     16:08Z    AF5JM         [TFC] (Traffic flagged — no comment text recorded)"
+    row_wm5q_hail = "     16:12Z    WM5Q          [TFC] [HAIL] Quarter size hail"
+    row_k5wx_flood = "     16:18Z    K5WX          [FLOOD] Water over FM 346"
+    row_wm5q_wind = "     16:25Z    WM5Q          [WIND] 55 mph gusts"
+    for snippet in (
+        row_wm5q_ci,
+        row_k5wx_ci,
+        row_af5jm_ci,
+        row_af5jm_tfc,
+        row_wm5q_hail,
+        row_k5wx_flood,
+        row_wm5q_wind,
+    ):
+        assert snippet in checkin_log
+    assert (
+        checkin_log.index(row_wm5q_ci)
+        < checkin_log.index(row_k5wx_ci)
+        < checkin_log.index(row_af5jm_ci)
+        < checkin_log.index(row_af5jm_tfc)
+        < checkin_log.index(row_wm5q_hail)
+        < checkin_log.index(row_k5wx_flood)
+        < checkin_log.index(row_wm5q_wind)
+    )
+    assert ("\n" + " " * 29 + "Moving NE at 25 mph — Hwy 69 & Loop 49") in checkin_log
 
-    # Long station comment wraps cleanly aligned with the '|' separator and callsign column
+    # Chronological timeline with long comment wrapping, pulled NWS update (labeled NWS), and Radiogram
     long_msg = (
         "[16:30Z] WM5Q [LOC: Loop 49 & US 69] Heavy rain reducing visibility to less than "
         "one quarter mile with ponding across all northbound lanes\n"
-        "Unstamped follow-up note that should align with the callsign column and wrap "
-        "cleanly onto the next line at column fifteen"
+        "Unstamped follow-up note that should align with the message column and wrap "
+        "cleanly onto the next line at column twenty nine"
     )
     long_net = {"name": "Wrap Net", "net_type": "Skywarn", "ncs_call": "W5CDN", "frequency": "146.940", "band": "2m", "mode": "FM", "started_at": "2026-11-23T16:00:00Z"}
     long_ci = [
+        {
+            "callsign": "W5CDN",
+            "name": "NCS",
+            "qth": "Tyler, TX",
+            "county": "Smith",
+            "state": "TX",
+            "status": "ACTIVE",
+            "has_traffic": 0,
+            "checked_in_at": "2026-11-23T16:00:00Z",
+            "checked_out_at": None,
+            "comments": "Net Control Station (NCS)\n[16:15Z] [WX] [LOC: Smith County, TX] NWS: 1 active alert(s) — Severe Thunderstorm Warning",
+        },
         {
             "callsign": "WM5Q",
             "name": "Wayne",
@@ -1551,30 +1589,65 @@ def test_net_report_stats_and_attributed_announcements(client: TestClient) -> No
             "checked_in_at": "2026-11-23T16:05:00Z",
             "checked_out_at": None,
             "comments": long_msg,
+        },
+    ]
+    long_rgs = [
+        {
+            "msg_number": "101",
+            "precedence": "P",
+            "check_text": "8",
+            "station_of_origin": "WM5Q",
+            "received_from": "WM5Q",
+            "received_at": "1622Z",
+            "time_filed": "1620Z",
+            "created_at": "2026-11-23T16:22:00Z",
+            "to_name": "EOC TYLER",
+            "status": "LISTED",
+            "message_text": "ROOF DAMAGE AT SHELTER ONE X NEED TARPS",
         }
     ]
-    wrapped_summary = net_app.build_summary_export(long_net, long_ci)
-    w_sec = wrapped_summary.split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[1].split("CHECK-IN LOG")[0]
+    wrapped_summary = net_app.build_summary_export(long_net, long_ci, long_rgs)
+    assert wrapped_summary.index("CHECK-IN LOG") < wrapped_summary.index("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")
+    assert wrapped_summary.index("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)") < wrapped_summary.index("ARRL RADIOGRAMS")
+
+    w_log = wrapped_summary.split("CHECK-IN LOG")[1].split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[0]
+    w_sec = wrapped_summary.split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[1].split("ARRL RADIOGRAMS")[0]
     w_lines = [ln for ln in w_sec.splitlines() if "|" in ln]
     assert len(w_lines) >= 2
     pipe_cols = {ln.rfind("|") for ln in w_lines}
     assert len(pipe_cols) == 1  # every wrapped continuation line aligns on the '|' column
     rejoined_body = " ".join(ln.split("|")[-1].strip() for ln in w_lines)
     assert rejoined_body.endswith("— Loop 49 & US 69")
-    w_log = wrapped_summary.split("CHECK-IN LOG")[1]
-    assert "\n     16:30Z    [TFC] [LOC: Loop 49 & US 69] Heavy rain" in w_log
-    assert "\n               Unstamped follow-up note" in w_log
-    # Continuation lines for both stamped & unstamped comments wrap cleanly at col 15 (CALLSIGN col)
-    w_log_lines = [
+    # Pulled NWS update uses 'NWS' in the CALLSIGN column in both sections
+    assert "16:15Z | NWS      | [WX] NWS: 1 active alert(s)" in w_sec
+    assert "     16:15Z    NWS           [WX] NWS: 1 active alert(s)" in w_log
+    # Radiogram interleaved chronologically at 16:22Z between NWS (16:15Z) and WM5Q report (16:30Z)
+    rg_line = "     16:22Z    WM5Q          [RADIOGRAM NR 101 | P] TO: EOC TYLER (CK 8) [LISTED]"
+    wm_line = "     16:30Z    WM5Q          [TFC] Heavy rain reducing visibility"
+    assert rg_line in w_log
+    assert ("\n" + " " * 29 + "ROOF DAMAGE AT SHELTER ONE X NEED TARPS") in w_log
+    assert wm_line in w_log
+    assert w_log.index("16:15Z    NWS") < w_log.index(rg_line) < w_log.index(wm_line)
+    # Continuation lines in CHECK-IN LOG wrap cleanly at col 29 (message column)
+    w_log_msg_lines = [
         ln
         for ln in w_log.splitlines()
         if ln.strip()
         and not ln.lstrip().startswith("#")
         and not ln.startswith("-")
         and not ln.startswith("  1")
+        and not ln.startswith("  2")
     ]
-    assert len(w_log_lines) >= 4
-    assert all(ln.startswith("     16:30Z    ") or ln.startswith(" " * 15) for ln in w_log_lines)
+    assert all(
+        ln.startswith("     16:") or ln.startswith(" " * 29)
+        for ln in w_log_msg_lines
+    )
+
+    # _radiogram_time_hhmm fallback handling (compact, ISO, invalid)
+    assert net_app._radiogram_time_hhmm({"received_at": "1622Z"}) == ("16:22Z", 982)
+    assert net_app._radiogram_time_hhmm({"time_filed": "09:05"}) == ("09:05Z", 545)
+    assert net_app._radiogram_time_hhmm({"created_at": "2026-11-23T14:30:00Z"}) == ("14:30Z", 870)
+    assert net_app._radiogram_time_hhmm({"received_at": "bad"}) == ("--:--Z", None)
 
     # Station without QTH/county/state omits trailing location separator in Station Comments
     no_loc_events = net_app._extract_station_report_events(
@@ -1993,8 +2066,11 @@ def test_nws_skywarn_county_report_endpoint_and_service(
     ncs_ci = test_sky["checkins"][0]
     assert "[WX] [LOC: Smith County, TX] NWS: 2 active alert(s)" in ncs_ci["comments"]
     sky_summary = client.get(f"/api/nets/{test_sky['id']}/export/summary").text
-    sky_section = sky_summary.split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[1].split("CHECK-IN LOG")[0]
-    assert "| W5CDN    | [WX] NWS: 2 active alert(s) — Tornado Warning, Severe Thunderstorm" in sky_section
+    assert sky_summary.index("CHECK-IN LOG") < sky_summary.index("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")
+    sky_log = sky_summary.split("CHECK-IN LOG")[1].split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[0]
+    sky_section = sky_summary.split("STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)")[1]
+    assert "NWS           [WX] NWS: 2 active alert(s)" in sky_log
+    assert "| NWS      | [WX] NWS: 2 active alert(s) — Tornado Warning, Severe Thunderstorm" in sky_section
     assert "Smith County, TX" in sky_section
     assert "Net Control Station (NCS)" not in sky_section
 

@@ -306,6 +306,30 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.locator("#quickNoteBackdrop").wait_for(state="visible", timeout=5000)
             reopened_again = page.locator("#quickNoteText").input_value()
             assert len(reopened_again.splitlines()) == 2
+            # Issue #49: Launch Radiogram directly from Station Notes & log 2 back-to-back via Save & Add Another
+            page.click("#btnQuickNoteRadiogram")
+            page.locator("#quickNoteBackdrop").wait_for(state="hidden", timeout=5000)
+            page.locator("#radiogramEditorBackdrop").wait_for(state="visible", timeout=5000)
+            assert page.locator("#rgRcvdFrom").input_value() == "K5TST"
+            assert page.locator("#rgOrigin").input_value() == "K5TST"
+            assert page.locator("#rgRcvdAt").input_value().endswith("Z")
+            page.fill("#rgNumber", "101")
+            page.fill("#rgToName", "EOC TRAVIS")
+            page.fill("#rgMessageText", "SHELTER ONE OPEN X ALL CLEAR")
+            page.click("#btnSaveAndAddAnotherRg")
+            page.locator("#rgNumber").wait_for(state="visible", timeout=5000)
+            page.wait_for_function("document.getElementById('rgNumber').value === '102'", timeout=5000)
+            assert page.locator("#rgRcvdFrom").input_value() == "K5TST"
+            assert page.locator("#rgToName").input_value() == ""
+            assert page.locator("#rgMessageText").input_value() == ""
+            page.fill("#rgToName", "RED CROSS")
+            page.fill("#rgMessageText", "REQUESTING COTS AND WATER")
+            page.click('#radiogramForm button[type="submit"]')
+            page.locator("#radiogramEditorBackdrop").wait_for(state="hidden", timeout=5000)
+            # Re-opening Station Notes shows the station's radiogram count badge
+            k5_row.locator('button[data-action="quick-note"]').click()
+            page.locator("#quickNoteBackdrop").wait_for(state="visible", timeout=5000)
+            page.locator("#quickNoteRgBadge", has_text="2 Radiograms").wait_for(state="visible", timeout=5000)
             page.locator('#quickNoteBackdrop [data-close-modal="quickNoteBackdrop"]').first.click()
             page.locator("#quickNoteBackdrop").wait_for(state="hidden", timeout=5000)
 
@@ -335,6 +359,8 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.locator("#netReportBackdrop").wait_for(state="visible", timeout=5000)
             report_text = page.locator("#netReportText").input_value()
             assert "Travis County RACES Net" in report_text and "K5TST" in report_text and "TX-104" in report_text
+            assert "[RADIOGRAM NR 101" in report_text and "SHELTER ONE OPEN X ALL CLEAR" in report_text
+            assert "[RADIOGRAM NR 102" in report_text and "REQUESTING COTS AND WATER" in report_text
             notes_box = page.locator("#reportStationNotesBox").inner_text()
             assert "| K5TST" in notes_box and "Wind gusts 45 mph" in notes_box
             page.locator('#netReportBackdrop [data-close-modal="netReportBackdrop"]').first.click()

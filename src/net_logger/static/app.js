@@ -2268,8 +2268,11 @@
         const secIdx = summaryText.indexOf(commentsHeader);
         if (secIdx !== -1) {
           const afterHeader = summaryText.slice(secIdx + commentsHeader.length);
-          const logIdx = afterHeader.indexOf("\n\nCHECK-IN LOG");
-          const rawBlock = (logIdx !== -1 ? afterHeader.slice(0, logIdx) : afterHeader).trim();
+          const nextIndices = ["\n\nARRL RADIOGRAMS", "\n\nCHECK-IN LOG"]
+            .map((marker) => afterHeader.indexOf(marker))
+            .filter((idx) => idx !== -1);
+          const stopIdx = nextIndices.length ? Math.min(...nextIndices) : -1;
+          const rawBlock = (stopIdx !== -1 ? afterHeader.slice(0, stopIdx) : afterHeader).trim();
           const blockLines = rawBlock.split(/\r?\n/);
           stationNotesBlock = (blockLines[0] && /^-+$/.test(blockLines[0].trim())
             ? blockLines.slice(1)
@@ -2428,6 +2431,19 @@
         return `${months[now.getUTCMonth()]} ${String(now.getUTCDate()).padStart(2, "0")}`;
       }
 
+      function updateQuickNoteRgBadge(callsign, rgList) {
+        const badge = $("quickNoteRgBadge");
+        if (!badge) return;
+        const target = (callsign || "").trim().toUpperCase();
+        const count = (rgList || []).filter((rg) => {
+          const rcvd = (rg.received_from || "").trim().toUpperCase();
+          const orig = (rg.station_of_origin || "").trim().toUpperCase();
+          return target && (rcvd === target || orig === target);
+        }).length;
+        badge.textContent = count === 1 ? "1 Radiogram" : `${count} Radiograms`;
+        badge.classList.toggle("hidden", count === 0);
+      }
+
       function openQuickNoteModal(checkinId) {
         const c = (state.activeNet?.checkins || []).find((item) => item.id === checkinId);
         if (!c) return;
@@ -2438,6 +2454,20 @@
         const ta = $("quickNoteText");
         ta.value = existing ? `${existing}\n${stampPrefix}` : stampPrefix;
         $("quickNoteTraffic").checked = Boolean(c.has_traffic);
+        const netId = state.activeNet?.id;
+        updateQuickNoteRgBadge(
+          c.callsign,
+          (state.radiograms || []).filter((rg) => !netId || rg.net_id === netId)
+        );
+        if (netId) {
+          api(`/api/radiograms?net_id=${encodeURIComponent(netId)}`)
+            .then((rows) => {
+              if (Number($("quickNoteCheckinId").value) === c.id) {
+                updateQuickNoteRgBadge(c.callsign, rows);
+              }
+            })
+            .catch(() => {});
+        }
         $("quickNoteBackdrop").classList.remove("hidden");
         ta.focus();
         ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -3403,13 +3433,13 @@
         $("rgSentAt").value = rg ? (rg.sent_at || "") : "";
         $("rgNotes").value = rg ? (rg.notes || "") : "";
         $("rgArlPicker").value = "";
+        $("btnSaveAndAddAnotherRg")?.classList.toggle("hidden", isEdit);
         formatRadiogramPreviewFromForm();
         $("radiogramEditorBackdrop").classList.remove("hidden");
         $("rgToName").focus();
       }
 
-      async function handleRadiogramSubmit(e) {
-        e.preventDefault();
+      async function saveRadiogramFromForm(addAnother = false) {
         const idStr = $("rgId").value;
         const normalizedHx = normalizeArrlHx($("rgHx").value);
         $("rgHx").value = normalizedHx;
@@ -3437,14 +3467,37 @@
           notes: $("rgNotes").value.trim().toUpperCase(),
         };
         try {
+          let saved = null;
           if (idStr) {
-            await api(`/api/radiograms/${idStr}`, { method: "PATCH", body: JSON.stringify(payload) });
+            saved = await api(`/api/radiograms/${idStr}`, { method: "PATCH", body: JSON.stringify(payload) });
             toast("Radiogram updated", "success");
           } else {
-            await api("/api/radiograms", { method: "POST", body: JSON.stringify(payload) });
-            toast("ARRL Radiogram saved to routing folder", "success");
+            saved = await api("/api/radiograms", { method: "POST", body: JSON.stringify(payload) });
+            toast(
+              addAnother
+                ? `ARRL Radiogram NR ${saved.msg_number} saved — ready for next message`
+                : "ARRL Radiogram saved to routing folder",
+              "success"
+            );
           }
-          $("radiogramEditorBackdrop").classList.add("hidden");
+          if (addAnother && !idStr) {
+            const nextNum = /^\d+$/.test(payload.msg_number)
+              ? String(Number(payload.msg_number) + 1)
+              : "";
+            openRadiogramEditor({
+              msg_number: nextNum,
+              precedence: payload.precedence || "R",
+              station_of_origin: payload.station_of_origin,
+              place_of_origin: payload.place_of_origin,
+              time_filed: currentUtcCompact(),
+              date_filed: currentUtcDateShort(),
+              status: "LISTED",
+              received_from: payload.received_from,
+              received_at: currentUtcCompact(),
+            });
+          } else {
+            $("radiogramEditorBackdrop").classList.add("hidden");
+          }
           await loadRadiograms();
           if (state.prefs.panel_layout?.ntsHistory?.visible) await loadNtsHistory();
           if (state.activeNet) {
@@ -3456,6 +3509,11 @@
         } catch (err) {
           toast(`Radiogram error: ${err.message}`, "error");
         }
+      }
+
+      async function handleRadiogramSubmit(e) {
+        e.preventDefault();
+        await saveRadiogramFromForm(false);
       }
 
       // -----------------------------------------------------------------------
@@ -4667,6 +4725,36 @@
           );
         });
 
+        $("btnQuickNoteRadiogram").addEventListener("click", async () => {
+          const id = Number($("quickNoteCheckinId").value);
+          if (!id) return;
+          const c = (state.activeNet?.checkins || []).find((item) => item.id === id);
+          if (!c) return;
+          try {
+            const cleanedComments = $("quickNoteText").value
+              .replace(/(?:^|\n)\[\d{2}:\d{2}Z\]\s*$/, "")
+              .trim();
+            await patchCheckin(id, {
+              comments: cleanedComments,
+              has_traffic: true,
+            });
+            $("quickNoteBackdrop").classList.add("hidden");
+            const loc = c.qth || [c.county, c.state].filter(Boolean).join(", ") || "";
+            const nowCompact = currentUtcCompact();
+            openRadiogramEditor({
+              station_of_origin: c.callsign,
+              place_of_origin: loc,
+              time_filed: nowCompact,
+              date_filed: currentUtcDateShort(),
+              status: "LISTED",
+              received_from: c.callsign,
+              received_at: nowCompact,
+            });
+          } catch (err) {
+            toast(err.message, "error");
+          }
+        });
+
         $("quickNoteForm").addEventListener("submit", async (e) => {
           e.preventDefault();
           const id = Number($("quickNoteCheckinId").value);
@@ -4821,6 +4909,7 @@
           $("rgHx").value = normalizeArrlHx($("rgHx").value);
           formatRadiogramPreviewFromForm();
         });
+        $("btnSaveAndAddAnotherRg").addEventListener("click", () => saveRadiogramFromForm(true));
         $("radiogramForm").addEventListener("submit", handleRadiogramSubmit);
 
         $("netsList").addEventListener("click", (e) => {
