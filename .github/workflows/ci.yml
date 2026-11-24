@@ -704,7 +704,10 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [build-standalone]
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
+    if: >-
+      always() &&
+      needs.build-standalone.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v'))
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
