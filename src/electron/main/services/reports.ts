@@ -31,6 +31,7 @@ export function buildCsvExport(net: NetRecord, checkins: CheckinRecord[]): strin
     "Band",
     "Mode",
     "NCS",
+    "Secondary NCS",
     "Check-In #",
     "UTC Time",
     "Callsign",
@@ -57,6 +58,7 @@ export function buildCsvExport(net: NetRecord, checkins: CheckinRecord[]): strin
         net.band,
         net.mode,
         net.ncs_call,
+        net.secondary_ncs || "",
         idx + 1,
         c.checked_in_at,
         c.callsign,
@@ -496,6 +498,7 @@ export function buildSummaryExport(
     `Type:        ${net.net_type}`,
     `Status:      ${statusLabel}`,
     `NCS:         ${net.ncs_call}`,
+    ...(net.secondary_ncs ? [`Sec. NCS:    ${net.secondary_ncs}`] : []),
     `Freq / Mode: ${`${net.frequency || "N/A"} ${net.band} ${net.mode}`.trim()}`,
   ];
   if (net.tone_offset) lines.push(`Tone/Offset: ${net.tone_offset}`);
@@ -561,6 +564,7 @@ export function buildIcs214Text(net: NetRecord, checkins: CheckinRecord[]): stri
     `1. Incident / Net Name:  ${net.name}`,
     `2. Operational Period:   ${startUtc}  TO  ${endUtc}`,
     `3. Name / ICS Position:  ${net.ncs_call} — Net Control Station (NCS)`,
+    ...(net.secondary_ncs ? [`   Secondary / Logger:   ${net.secondary_ncs} — Secondary NCS / Logger`] : []),
     `4. Home Agency / Unit:   Amateur Radio (${net.net_type} — ${net.frequency || "N/A"} ${net.mode})`.trim(),
     `   Total Operator-Hours: ${opHours.toFixed(2)} hrs (${checkins.length} check-in(s))`,
     "",
@@ -617,7 +621,7 @@ export function buildIcs214Html(net: NetRecord, checkins: CheckinRecord[]): stri
 </head><body>
 <h1>ICS 214 — ACTIVITY LOG</h1>
 <p><strong>1. Incident / Net Name:</strong> ${escHtml(net.name)} &nbsp;|&nbsp; <strong>2. Operational Period:</strong> ${escHtml(net.started_at)} to ${escHtml(net.ended_at || "IN PROGRESS")}</p>
-<p><strong>3. NCS:</strong> ${escHtml(net.ncs_call)} &nbsp;|&nbsp; <strong>Operator-Hours:</strong> ${opHours.toFixed(2)} hrs</p>
+<p><strong>3. NCS:</strong> ${escHtml(net.ncs_call)}${net.secondary_ncs ? ` &nbsp;|&nbsp; <strong>Secondary NCS:</strong> ${escHtml(net.secondary_ncs)}` : ""} &nbsp;|&nbsp; <strong>Operator-Hours:</strong> ${opHours.toFixed(2)} hrs</p>
 <h2>6. Resources Assigned</h2>
 <table><thead><tr><th>Callsign</th><th>Name</th><th>QTH</th><th>Status</th><th>Spotter ID</th><th>RACES ID</th><th>In &rarr; Out UTC</th></tr></thead><tbody>${resourceRows}</tbody></table>
 <h2>7. Activity Log</h2>

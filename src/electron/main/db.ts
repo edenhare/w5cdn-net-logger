@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS nets (
     mode TEXT NOT NULL DEFAULT 'FM',
     tone_offset TEXT NOT NULL DEFAULT '',
     ncs_call TEXT NOT NULL,
+    secondary_ncs TEXT NOT NULL DEFAULT '',
     started_at TEXT NOT NULL,
     ended_at TEXT,
     notes TEXT NOT NULL DEFAULT ''
@@ -171,6 +172,11 @@ export class NetLoggerDb {
     this.db.run("PRAGMA foreign_keys = ON;");
     this.db.run(SCHEMA_SQL);
 
+    const netCols = this.getTableColumns("nets");
+    if (!netCols.has("secondary_ncs")) {
+      this.db.run("ALTER TABLE nets ADD COLUMN secondary_ncs TEXT NOT NULL DEFAULT ''");
+    }
+
     const rgCols = this.getTableColumns("radiograms");
     if (!rgCols.has("file_path")) {
       this.db.run("ALTER TABLE radiograms ADD COLUMN file_path TEXT NOT NULL DEFAULT ''");
@@ -308,6 +314,7 @@ export class NetLoggerDb {
       mode: String(row.mode || "FM"),
       tone_offset: String(row.tone_offset || ""),
       ncs_call: String(row.ncs_call || ""),
+      secondary_ncs: String(row.secondary_ncs || ""),
       started_at: String(row.started_at || ""),
       ended_at: row.ended_at === null || row.ended_at === undefined ? null : String(row.ended_at),
       notes: String(row.notes || ""),

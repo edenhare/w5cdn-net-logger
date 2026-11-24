@@ -310,6 +310,7 @@ export function getPreferences(
     script_panel_position,
     panel_layout,
     operator_call: getOperatorCall(db, env),
+    default_secondary_ncs: (stored.default_secondary_ncs || "").trim().toUpperCase(),
     qrz_user: effectiveUser,
     qrz_pass_set: Boolean(effectivePass),
     qrz_source,
@@ -384,6 +385,10 @@ export function updatePreferences(
   if (payload.operator_call !== undefined) {
     const raw = String(payload.operator_call || "").trim();
     db.setSetting("operator_call", raw ? normalizeCallsign(raw) : "", now);
+  }
+  if (payload.default_secondary_ncs !== undefined) {
+    const raw = String(payload.default_secondary_ncs || "").trim();
+    db.setSetting("default_secondary_ncs", raw ? normalizeCallsign(raw) : "", now);
   }
   if (payload.qrz_user !== undefined) {
     db.setSetting("qrz_user", cleanSingleLine(payload.qrz_user, 120), now);

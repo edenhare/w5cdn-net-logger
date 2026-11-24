@@ -59,13 +59,21 @@ try {
   const title = await page.title();
   if (!title.includes("W5CDN Net Logger")) throw new Error(`Unexpected title: ${title}`);
 
-  // 1. Start RACES Net
+  // 1. Start RACES Net using "I'm Secondary / Logger" quick button
   await page.locator('[data-quick-preset="RACES"]').click();
   await page.locator("#netModalBackdrop").waitFor({ state: "visible", timeout: 5000 });
   await page.fill("#netFormName", "Travis County RACES Net");
+  await page.click("#btnImSecondaryNcs");
+  const secVal = await page.locator("#netFormSecondaryNcs").inputValue();
+  if (secVal !== "W5CDN") throw new Error(`Expected Secondary NCS W5CDN, got ${secVal}`);
+  await page.fill("#netFormNcs", "K5NCS");
   await page.fill("#netFormNotes", "Primary EOC repeater 147.000");
   await page.click("#netFormSubmitBtn");
   await page.locator("#activeNetWorkspace").waitFor({ state: "visible", timeout: 5000 });
+  const specsText = await page.locator("#netSpecs").innerText();
+  if (!specsText.includes("K5NCS") || !specsText.includes("Sec. NCS: W5CDN")) {
+    throw new Error(`Expected Primary + Secondary NCS in header, got: ${specsText}`);
+  }
 
   // 2. Log Check-in with RACES ID & Traffic
   await page.fill("#inCallsign", "K5TST");
@@ -100,6 +108,9 @@ try {
   await page.click("#btnCopySummary");
   await page.locator("#netReportBackdrop").waitFor({ state: "visible", timeout: 5000 });
   const reportText = await page.locator("#netReportText").inputValue();
+  if (!reportText.includes("Sec. NCS:    W5CDN")) {
+    throw new Error("Chronological Net Report missing Secondary NCS line");
+  }
   if (!reportText.includes("[RADIOGRAM NR 101") || !reportText.includes("[RADIOGRAM NR 102")) {
     throw new Error("Chronological Net Report missing radiograms");
   }

@@ -879,10 +879,17 @@
 
           <!-- Tab 2: QRZ, Operator & Routing Folder -->
           <div id="prefTabQrz" class="hidden" style="display:flex; flex-direction:column; gap:12px;">
-            <div class="field">
-              <label for="prefOperatorCall">Default Operator / NCS Callsign</label>
-              <input type="text" id="prefOperatorCall" class="input callsign-input" placeholder="W5CDN" />
-              <span style="font-size:0.82em; color:var(--text-muted);">Leave blank to inherit the <code>OPERATOR_CALL</code> environment variable (default: W5CDN).</span>
+            <div class="form-grid-2">
+              <div class="field">
+                <label for="prefOperatorCall">Default Operator / NCS Callsign</label>
+                <input type="text" id="prefOperatorCall" class="input callsign-input" placeholder="W5CDN" />
+                <span style="font-size:0.82em; color:var(--text-muted);">Leave blank to inherit <code>OPERATOR_CALL</code> (default: W5CDN).</span>
+              </div>
+              <div class="field">
+                <label for="prefDefaultSecondaryNcs">Default Secondary / Logger NCS (optional)</label>
+                <input type="text" id="prefDefaultSecondaryNcs" class="input callsign-input" placeholder="Optional (e.g. W5CDN)" />
+                <span style="font-size:0.82em; color:var(--text-muted);">Pre-fills Secondary NCS on new nets when you routinely log for another NCS.</span>
+              </div>
             </div>
 
             <hr style="border:none; border-top:1px solid var(--border); margin:2px 0;" />
@@ -1220,6 +1227,7 @@
 
                 <div class="placeholder-chips" id="scriptPlaceholderChips">
                   <button type="button" class="placeholder-chip" data-insert-tag="{{NCS_CALL}}">{{NCS_CALL}}</button>
+                  <button type="button" class="placeholder-chip" data-insert-tag="{{SECONDARY_NCS}}">{{SECONDARY_NCS}}</button>
                   <button type="button" class="placeholder-chip" data-insert-tag="{{NET_NAME}}">{{NET_NAME}}</button>
                   <button type="button" class="placeholder-chip" data-insert-tag="{{NET_TYPE}}">{{NET_TYPE}}</button>
                   <button type="button" class="placeholder-chip" data-insert-tag="{{FREQUENCY}}">{{FREQUENCY}}</button>
@@ -1323,9 +1331,17 @@
               </select>
             </div>
             <div class="field">
-              <label for="netFormNcs">NCS Callsign</label>
+              <label for="netFormNcs">Primary NCS Callsign</label>
               <input type="text" id="netFormNcs" class="input mono" style="text-transform:uppercase;" placeholder="W5CDN" />
             </div>
+          </div>
+
+          <div class="field">
+            <label for="netFormSecondaryNcs" style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+              <span>Secondary / Logger NCS (optional)</span>
+              <button type="button" class="btn btn-xs" id="btnImSecondaryNcs" title="Move your callsign to Secondary NCS so you can enter another Primary NCS">I'm Secondary / Logger</button>
+            </label>
+            <input type="text" id="netFormSecondaryNcs" class="input mono" style="text-transform:uppercase;" placeholder="Optional backup or logging station callsign" />
           </div>
 
           <div class="form-grid-3">
