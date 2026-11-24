@@ -2128,7 +2128,7 @@
       }
 
       // -----------------------------------------------------------------------
-      // Exports (Native pywebview Save Dialog + Browser Download Fallback)
+      // Exports (Native Electron Save Dialog + Browser Download Fallback)
       // -----------------------------------------------------------------------
       async function downloadExport(kind) {
         if (!state.activeNet) return;
@@ -2144,9 +2144,9 @@
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           const text = await resp.text();
 
-          if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_text_file === "function") {
+          if (window.desktopApi && typeof window.desktopApi.saveTextFile === "function") {
             const dialogKind = kind === "csv" || kind === "adif" ? kind : "txt";
-            const res = await window.pywebview.api.save_text_file(filename, text, dialogKind);
+            const res = await window.desktopApi.saveTextFile(filename, text, dialogKind);
             if (res && res.saved) toast(`Saved ${filename}`, "success");
             else if (res && res.error) throw new Error(res.error);
             return;
@@ -2182,8 +2182,8 @@
       }
 
       async function saveTextContent(filename, text, dialogKind = "txt") {
-        if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_text_file === "function") {
-          const res = await window.pywebview.api.save_text_file(filename, text, dialogKind);
+        if (window.desktopApi && typeof window.desktopApi.saveTextFile === "function") {
+          const res = await window.desktopApi.saveTextFile(filename, text, dialogKind);
           if (res && res.saved) toast(`Saved ${filename}`, "success");
           else if (res && res.error) throw new Error(res.error);
           return;
