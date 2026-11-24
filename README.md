@@ -120,12 +120,11 @@ npm run package:win     # Output: release/W5CDN Net Logger Setup <ver>.exe
 npm run package:linux   # Output: release/W5CDN Net Logger-<ver>.AppImage
 ```
 
-### Pre-Commit Hooks
-If you have [`pre-commit`](https://pre-commit.com/) installed:
-```bash
-pre-commit install --install-hooks --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
-pre-commit run --all-files
-```
+### Git Hooks (Husky)
+Git hooks (`pre-commit`, `commit-msg`, and `pre-push`) are managed automatically by **Husky** via `npm install` (`prepare` script) with zero Python dependencies:
+- **pre-commit:** Blocks local DBs/secrets/private keys/merge conflicts/large files, validates JSON & LF line endings, and runs TypeScript + Vitest checks when source files change.
+- **commit-msg:** Enforces Conventional Commits (`feat:`, `fix:`, `refactor:`, `ci:`, `docs:`, etc.).
+- **pre-push:** Runs `version:check`, `typecheck`, and `test:cov`.
 
 ## Project Layout
 

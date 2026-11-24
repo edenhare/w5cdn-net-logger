@@ -10,6 +10,7 @@ import {
   readVersions,
 } from "../../scripts/bump-version.mjs";
 import { formatReleaseNotes } from "../../scripts/generate-changelog.mjs";
+import { validateCommitMessage, validateStagedFiles } from "../../scripts/git-hooks.mjs";
 
 describe("Release & changelog Node scripts", () => {
   const dirs: string[] = [];
@@ -66,5 +67,24 @@ describe("Release & changelog Node scripts", () => {
     expect(notes).toContain("### Features");
     expect(notes).toContain("### Bug Fixes");
     expect(notes).toContain("https://github.com/edenhare/w5cdn-net-logger/commit/aaa1111");
+  });
+
+  it("validates Conventional Commit messages and staged files for Husky hooks", () => {
+    expect(validateCommitMessage("feat(ui): add dark mode").ok).toBe(true);
+    expect(validateCommitMessage("Merge pull request #54").ok).toBe(true);
+    expect(validateCommitMessage("bad commit message").ok).toBe(false);
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "husky-hooks-"));
+    dirs.push(tmp);
+    fs.writeFileSync(path.join(tmp, "good.json"), '{"ok": true}\n');
+    fs.writeFileSync(path.join(tmp, "broken.json"), "{not-json");
+    fs.writeFileSync(path.join(tmp, "start.sh"), "#!/usr/bin/env bash\r\necho hi\r\n");
+
+    expect(validateStagedFiles(["good.json"], tmp)).toEqual([]);
+    const errs = validateStagedFiles(["net_logger.db", ".env", "broken.json", "start.sh"], tmp);
+    expect(errs.some((e: string) => e.includes("net_logger.db"))).toBe(true);
+    expect(errs.some((e: string) => e.includes(".env"))).toBe(true);
+    expect(errs.some((e: string) => e.includes("Invalid JSON"))).toBe(true);
+    expect(errs.some((e: string) => e.includes("CRLF"))).toBe(true);
   });
 });

@@ -1,0 +1,154 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const BLOCKED_PATH_RE =
+  /(^|\/)(\.env|config\.txt|desktop_startup\.log|update\.log)$|\.(db|db-wal|db-shm|bak)$|(^|\/)(radiograms|outbox)\//i;
+const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
+const MERGE_CONFLICT_RE = /^(<{7} |={7}$|>{7} )/m;
+const LF_ONLY_RE = /^(start\.sh|scripts\/install_linux_desktop\.sh|\.github\/.*\.ya?ml|\.husky\/[^/]+)$/;
+const CONVENTIONAL_RE =
+  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+/;
+const MAIN_CODE_RE =
+  /^(src\/(electron|static)\/.*|tests\/electron\/.*|scripts\/.*\.mjs|package\.json|tsconfig\.json|vitest\.config\.ts)$/;
+const MAX_FILE_BYTES = 1000 * 1024;
+
+function runCmd(cmd, args, opts = {}) {
+  const isWin = process.platform === "win32";
+  const res = spawnSync(cmd, args, {
+    stdio: "inherit",
+    shell: isWin && cmd.toLowerCase().endsWith(".cmd"),
+    ...opts,
+  });
+  if (res.error) throw res.error;
+  if (res.status !== 0) {
+    process.exit(res.status ?? 1);
+  }
+}
+
+function npmBin() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+export function validateCommitMessage(rawMessage) {
+  const firstLine = String(rawMessage || "").split(/\r?\n/)[0].trim();
+  if (CONVENTIONAL_RE.test(firstLine) || firstLine.startsWith("Merge ") || firstLine.startsWith("Revert ")) {
+    return { ok: true, firstLine };
+  }
+  return {
+    ok: false,
+    firstLine,
+    error: `Commit message must follow Conventional Commits (e.g. feat(ui): ... or fix: ...). Got: ${firstLine}`,
+  };
+}
+
+export function validateStagedFiles(files, rootDir = process.cwd()) {
+  const errors = [];
+  for (const relRaw of files) {
+    const rel = relRaw.replace(/\\/g, "/");
+    if (BLOCKED_PATH_RE.test(rel)) {
+      errors.push(`Blocked sensitive/runtime file: ${rel}`);
+      continue;
+    }
+    const abs = path.resolve(rootDir, rel);
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+
+    const stat = fs.statSync(abs);
+    if (stat.size > MAX_FILE_BYTES) {
+      errors.push(`File exceeds 1000 KB limit (${Math.round(stat.size / 1024)} KB): ${rel}`);
+    }
+
+    const buf = fs.readFileSync(abs);
+    // Skip binary files for text-based checks
+    if (buf.includes(0)) continue;
+    const text = buf.toString("utf-8");
+
+    if (rel !== "scripts/git-hooks.mjs" && PRIVATE_KEY_RE.test(text)) {
+      errors.push(`Private key detected in staged file: ${rel}`);
+    }
+    if (rel !== "scripts/git-hooks.mjs" && MERGE_CONFLICT_RE.test(text)) {
+      errors.push(`Merge conflict markers detected in: ${rel}`);
+    }
+    if (rel.endsWith(".json")) {
+      try {
+        JSON.parse(text);
+      } catch (err) {
+        errors.push(`Invalid JSON in ${rel}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (LF_ONLY_RE.test(rel) && text.includes("\r\n")) {
+      errors.push(`CRLF line endings not allowed in ${rel} (use LF)`);
+    }
+  }
+  return errors;
+}
+
+function getStagedFiles() {
+  const out = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], {
+    encoding: "utf-8",
+  });
+  return out
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function runPreCommit() {
+  const staged = getStagedFiles();
+  const errors = validateStagedFiles(staged);
+  if (errors.length > 0) {
+    for (const err of errors) console.error(`[husky:pre-commit] ERROR: ${err}`);
+    process.exit(1);
+  }
+
+  const npm = npmBin();
+  if (staged.some((f) => MAIN_CODE_RE.test(f)) && fs.existsSync("node_modules")) {
+    runCmd(npm, ["run", "typecheck"]);
+    runCmd(npm, ["test"]);
+  }
+
+  if (staged.some((f) => f.startsWith("apps/nts-traffic/")) && fs.existsSync(path.join("apps", "nts-traffic", "node_modules"))) {
+    runCmd(npm, ["--prefix", "apps/nts-traffic", "run", "typecheck"]);
+    runCmd(npm, ["--prefix", "apps/nts-traffic", "test"]);
+  }
+}
+
+function runCommitMsg(msgFile) {
+  if (!msgFile || !fs.existsSync(msgFile)) {
+    console.error("[husky:commit-msg] ERROR: Missing commit message file path");
+    process.exit(1);
+  }
+  const raw = fs.readFileSync(msgFile, "utf-8");
+  const check = validateCommitMessage(raw);
+  if (!check.ok) {
+    console.error(`[husky:commit-msg] ERROR: ${check.error}`);
+    process.exit(1);
+  }
+}
+
+function runPrePush() {
+  const npm = npmBin();
+  runCmd(process.execPath, ["scripts/bump-version.mjs", "--check"]);
+  runCmd(npm, ["run", "typecheck"]);
+  runCmd(npm, ["run", "test:cov"]);
+}
+
+function main() {
+  const hook = process.argv[2];
+  if (hook === "pre-commit") {
+    runPreCommit();
+  } else if (hook === "commit-msg") {
+    runCommitMsg(process.argv[3]);
+  } else if (hook === "pre-push") {
+    runPrePush();
+  } else {
+    console.error("Usage: node scripts/git-hooks.mjs <pre-commit|commit-msg|pre-push> [args]");
+    process.exit(2);
+  }
+}
+
+const isEntrypoint = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (isEntrypoint) {
+  main();
+}
