@@ -23,7 +23,7 @@
     "@types/sql.js": "^1.4.9",
     "electron": "^35.0.0",
     "electron-builder": "^26.18.0",
-    "typescript": "^5.7.3",
+    "typescript": "^7.0.2",
     "vitest": "^3.0.5"
   },
   "build": {
