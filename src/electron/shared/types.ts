@@ -42,6 +42,7 @@ export interface NetRecord {
   mode: string;
   tone_offset: string;
   ncs_call: string;
+  secondary_ncs: string;
   started_at: string;
   ended_at: string | null;
   notes: string;
@@ -204,6 +205,7 @@ export interface PreferencesResponse {
   script_panel_position: ScriptPanelPosition;
   panel_layout: Record<string, PanelLayoutEntry>;
   operator_call: string;
+  default_secondary_ncs: string;
   qrz_user: string;
   qrz_pass_set: boolean;
   qrz_source: "preferences" | "mixed" | "env" | "none";

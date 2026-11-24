@@ -24,7 +24,7 @@ Best if you just want to download and run without installing developer tools.
 1. Download the `W5CDN Net Logger Setup *.exe` installer from the [GitHub Releases](https://github.com/edenhare/w5cdn-net-logger/releases) page.
 2. Run the installer (if Windows SmartScreen warns about an unrecognized publisher on first launch, click **More info → Run anyway**).
 3. Launch **W5CDN Net Logger** from your Start Menu or Desktop shortcut.
-   - Your SQLite database (`net_logger.db`), `radiograms/`, and `outbox/` are stored safely in your user data folder (`%APPDATA%\W5CDN Net Logger`), or in `NET_LOGGER_DATA_DIR` if set.
+   - Your SQLite database (`net_logger.db`), `radiograms/`, and `outbox/` are stored safely in your user data folder (`%APPDATA%\w5cdn-net-logger`), or in `NET_LOGGER_DATA_DIR` if set.
 
 ### Linux
 1. Download the `W5CDN Net Logger-*.AppImage` from the [GitHub Releases](https://github.com/edenhare/w5cdn-net-logger/releases) page.
@@ -33,7 +33,7 @@ Best if you just want to download and run without installing developer tools.
    chmod +x "W5CDN Net Logger-"*.AppImage
    ./"W5CDN Net Logger-"*.AppImage
    ```
-   - Data is stored in `~/.config/W5CDN Net Logger` (or `NET_LOGGER_DATA_DIR` if set).
+   - Data is stored in `~/.config/w5cdn-net-logger` (or `NET_LOGGER_DATA_DIR` if set).
 
 ---
 
@@ -83,7 +83,7 @@ When launching on a new machine, open **Preferences** (gear icon in the top bar)
 ---
 
 ## Data, Backups & Upgrading
-- All data lives locally in your data directory (`%APPDATA%\W5CDN Net Logger` for packaged Windows installs, `~/.config/W5CDN Net Logger` for packaged Linux installs, or the repo directory when running from source — override anytime with `NET_LOGGER_DATA_DIR`):
+- All data lives locally in your data directory (`%APPDATA%\w5cdn-net-logger` for packaged Windows installs, `~/.config/w5cdn-net-logger` for packaged Linux installs, or the repo directory when running from source — override anytime with `NET_LOGGER_DATA_DIR`):
   - `net_logger.db` (100% schema-compatible SQLite database — nets, check-ins, roster, scripts, radiograms, preferences)
   - `radiograms/` (permanent plain-text copies of every ARRL Radiogram)
   - `outbox/` (staged digital messages when using outbox delivery)

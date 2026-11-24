@@ -143,53 +143,66 @@ export function createNet(
   const tone_offset = cleanSingleLine(payload.tone_offset ?? "", 60);
   const rawNcs = cleanSingleLine(payload.ncs_call ?? "", 24).toUpperCase();
   const ncs_call = rawNcs ? normalizeCallsign(rawNcs) : getOperatorCall(db, env);
+  const rawSecondary = cleanSingleLine(payload.secondary_ncs ?? "", 24).toUpperCase();
+  let secondary_ncs = rawSecondary ? normalizeCallsign(rawSecondary) : "";
+  if (secondary_ncs === ncs_call) secondary_ncs = "";
   const notes = String(payload.notes ?? "").replace(/\x00/g, "").trim().slice(0, 4000);
   const now = utcNowIso();
 
   db.run(
-    `INSERT INTO nets (name, net_type, frequency, band, mode, tone_offset, ncs_call, started_at, ended_at, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-    [name, net_type, frequency, band, mode, tone_offset, ncs_call, now, notes]
+    `INSERT INTO nets (name, net_type, frequency, band, mode, tone_offset, ncs_call, secondary_ncs, started_at, ended_at, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+    [name, net_type, frequency, band, mode, tone_offset, ncs_call, secondary_ncs, now, notes]
   );
   const netId = db.lastInsertRowId();
 
-  // Auto-check-in NCS station using any saved operator roster info
-  const opRow = db.queryOne("SELECT * FROM operators WHERE callsign = ?", [ncs_call]);
-  const op = opRow ? NetLoggerDb.mapOperator(opRow) : null;
-  db.run(
-    `INSERT INTO checkins (
-       net_id, callsign, name, qth, grid, county, state, status, has_traffic,
-       signal_report, comments, spotter_id, races_id, checked_in_at, checked_out_at, last_heard_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 0, '', 'Net Control Station (NCS)', ?, ?, ?, NULL, ?, ?)`,
-    [
-      netId,
-      ncs_call,
-      op?.preferred_name || op?.name || "",
-      op?.qth || "",
-      op?.grid || "",
-      op?.county || "",
-      op?.state || "",
-      op?.spotter_id || "",
-      op?.races_id || "",
-      now,
-      now,
-      now,
-    ]
-  );
-  touchOperatorFromCheckin(
-    db,
-    {
-      callsign: ncs_call,
-      name: op?.name || "",
-      qth: op?.qth || "",
-      grid: op?.grid || "",
-      county: op?.county || "",
-      state: op?.state || "",
-      spotter_id: op?.spotter_id || "",
-      races_id: op?.races_id || "",
-    },
-    true
-  );
+  // Auto-check-in NCS (and optional Secondary NCS / Logger) using saved operator roster info
+  const autoCheckinStations: Array<{ callsign: string; roleComment: string }> = [
+    { callsign: ncs_call, roleComment: "Net Control Station (NCS)" },
+  ];
+  if (secondary_ncs) {
+    autoCheckinStations.push({ callsign: secondary_ncs, roleComment: "Secondary NCS / Logger" });
+  }
+
+  for (const station of autoCheckinStations) {
+    const opRow = db.queryOne("SELECT * FROM operators WHERE callsign = ?", [station.callsign]);
+    const op = opRow ? NetLoggerDb.mapOperator(opRow) : null;
+    db.run(
+      `INSERT INTO checkins (
+         net_id, callsign, name, qth, grid, county, state, status, has_traffic,
+         signal_report, comments, spotter_id, races_id, checked_in_at, checked_out_at, last_heard_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 0, '', ?, ?, ?, ?, NULL, ?, ?)`,
+      [
+        netId,
+        station.callsign,
+        op?.preferred_name || op?.name || "",
+        op?.qth || "",
+        op?.grid || "",
+        op?.county || "",
+        op?.state || "",
+        station.roleComment,
+        op?.spotter_id || "",
+        op?.races_id || "",
+        now,
+        now,
+        now,
+      ]
+    );
+    touchOperatorFromCheckin(
+      db,
+      {
+        callsign: station.callsign,
+        name: op?.name || "",
+        qth: op?.qth || "",
+        grid: op?.grid || "",
+        county: op?.county || "",
+        state: op?.state || "",
+        spotter_id: op?.spotter_id || "",
+        races_id: op?.races_id || "",
+      },
+      true
+    );
+  }
   db.persist();
   return getNetDetail(db, netId);
 }
@@ -214,15 +227,21 @@ export function updateNet(db: NetLoggerDb, netId: number, payload: Record<string
     const raw = cleanSingleLine(payload.ncs_call, 24).toUpperCase();
     ncs_call = raw ? normalizeCallsign(raw) : existing.ncs_call;
   }
+  let secondary_ncs = existing.secondary_ncs;
+  if (payload.secondary_ncs !== undefined) {
+    const raw = cleanSingleLine(payload.secondary_ncs, 24).toUpperCase();
+    secondary_ncs = raw ? normalizeCallsign(raw) : "";
+  }
+  if (secondary_ncs === ncs_call) secondary_ncs = "";
   const notes =
     payload.notes !== undefined
       ? String(payload.notes ?? "").replace(/\x00/g, "").trim().slice(0, 4000)
       : existing.notes;
 
   db.run(
-    `UPDATE nets SET name = ?, net_type = ?, frequency = ?, band = ?, mode = ?, tone_offset = ?, ncs_call = ?, notes = ?
+    `UPDATE nets SET name = ?, net_type = ?, frequency = ?, band = ?, mode = ?, tone_offset = ?, ncs_call = ?, secondary_ncs = ?, notes = ?
      WHERE id = ?`,
-    [name, net_type, frequency, band, mode, tone_offset, ncs_call, notes, netId]
+    [name, net_type, frequency, band, mode, tone_offset, ncs_call, secondary_ncs, notes, netId]
   );
   db.persist();
   return getNetDetail(db, netId);
@@ -254,10 +273,25 @@ export function handoffNet(db: NetLoggerDb, netId: number, payload: Record<strin
   const noteExtra = cleanSingleLine(payload.notes ?? "", 500);
   const now = utcNowIso();
   const stamp = `${now.slice(11, 16)}Z`;
+  let nextSecondary = existing.secondary_ncs;
+  if (payload.secondary_ncs !== undefined) {
+    const rawSec = cleanSingleLine(payload.secondary_ncs, 24).toUpperCase();
+    nextSecondary = rawSec ? normalizeCallsign(rawSec) : "";
+  } else if (existing.secondary_ncs && newNcs === existing.secondary_ncs && existing.ncs_call !== newNcs) {
+    // Swapping primary control to the Secondary NCS moves outgoing Primary into Secondary NCS
+    nextSecondary = existing.ncs_call;
+  }
+  if (nextSecondary === newNcs) nextSecondary = "";
+
   const entry = `[${stamp}] NCS handoff: ${existing.ncs_call} -> ${newNcs}${noteExtra ? ` (${noteExtra})` : ""}`;
   const updatedNotes = existing.notes ? `${existing.notes}\n${entry}` : entry;
 
-  db.run("UPDATE nets SET ncs_call = ?, notes = ? WHERE id = ?", [newNcs, updatedNotes, netId]);
+  db.run("UPDATE nets SET ncs_call = ?, secondary_ncs = ?, notes = ? WHERE id = ?", [
+    newNcs,
+    nextSecondary,
+    updatedNotes,
+    netId,
+  ]);
   const existingCi = db.queryOne("SELECT id FROM checkins WHERE net_id = ? AND callsign = ?", [netId, newNcs]);
   if (!existingCi) {
     const opRow = db.queryOne("SELECT * FROM operators WHERE callsign = ?", [newNcs]);
@@ -298,6 +332,10 @@ export function cloneNet(
   const src = NetLoggerDb.mapNet(row);
   const customName = cleanSingleLine(payload.name ?? "", 160);
   const customNcs = cleanSingleLine(payload.ncs_call ?? "", 24).toUpperCase();
+  const customSecondary =
+    payload.secondary_ncs !== undefined
+      ? cleanSingleLine(payload.secondary_ncs ?? "", 24).toUpperCase()
+      : src.secondary_ncs;
   const customNotes = payload.notes !== undefined ? String(payload.notes ?? "").trim() : src.notes;
   return createNet(
     db,
@@ -309,6 +347,7 @@ export function cloneNet(
       mode: src.mode,
       tone_offset: src.tone_offset,
       ncs_call: customNcs || src.ncs_call,
+      secondary_ncs: customSecondary,
       notes: customNotes,
     },
     env

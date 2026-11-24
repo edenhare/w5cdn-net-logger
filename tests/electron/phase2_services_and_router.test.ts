@@ -403,4 +403,86 @@ describe("Electron Phase 2 Full Router & Services Parity", () => {
     const cssResp = await fetch(`${srv.url}/static/styles.css`);
     expect(cssResp.status).toBe(200);
   });
+
+  it("supports Secondary / Logger NCS across preferences, auto-check-in, handoff swap, cloning, and exports", async () => {
+    const r = new ApiRouter(db, { env: { OPERATOR_CALL: "W5CDN" } });
+
+    // Default Secondary NCS preference round-trip
+    const prefRes = await r.dispatch({
+      method: "PUT",
+      path: "/api/preferences",
+      body: { default_secondary_ncs: "w5cdn" },
+    });
+    expect(prefRes.status).toBe(200);
+    expect((prefRes.body as { default_secondary_ncs: string }).default_secondary_ncs).toBe("W5CDN");
+
+    // Start net where another operator (K5NCS) is Primary NCS and we (W5CDN) are Secondary NCS / Logger
+    const created = await r.dispatch({
+      method: "POST",
+      path: "/api/nets",
+      body: {
+        name: "Smith County Listening Net",
+        net_type: "ARES",
+        frequency: "147.000",
+        ncs_call: "K5NCS",
+        secondary_ncs: "W5CDN",
+      },
+    });
+    expect(created.status).toBe(201);
+    const netBody = created.body as {
+      id: number;
+      ncs_call: string;
+      secondary_ncs: string;
+      checkins: Array<{ callsign: string; comments: string; status: string }>;
+    };
+    expect(netBody.ncs_call).toBe("K5NCS");
+    expect(netBody.secondary_ncs).toBe("W5CDN");
+    expect(netBody.checkins).toHaveLength(2);
+    expect(netBody.checkins[0].callsign).toBe("K5NCS");
+    expect(netBody.checkins[1].callsign).toBe("W5CDN");
+    expect(netBody.checkins[1].comments).toBe("Secondary NCS / Logger");
+    expect(netBody.checkins[1].status).toBe("ACTIVE");
+
+    // Summary Report, CSV, ICS-214 Text & HTML include Secondary NCS
+    const summary = (await r.dispatch({ method: "GET", path: `/api/nets/${netBody.id}/export/summary` })).body as string;
+    expect(summary).toContain("NCS:         K5NCS");
+    expect(summary).toContain("Sec. NCS:    W5CDN");
+
+    const csv = (await r.dispatch({ method: "GET", path: `/api/nets/${netBody.id}/export/csv` })).body as string;
+    expect(csv).toContain(",NCS,Secondary NCS,");
+    expect(csv).toContain(",K5NCS,W5CDN,");
+
+    const icsTxt = (await r.dispatch({ method: "GET", path: `/api/nets/${netBody.id}/export/ics214` })).body as string;
+    expect(icsTxt).toContain("Secondary / Logger:   W5CDN");
+
+    const icsHtml = (await r.dispatch({ method: "GET", path: `/api/nets/${netBody.id}/export/ics214?format=html` })).body as string;
+    expect(icsHtml).toContain("<strong>Secondary NCS:</strong> W5CDN");
+
+    // Handoff to Secondary NCS automatically swaps Primary <-> Secondary
+    const handedOff = await r.dispatch({
+      method: "POST",
+      path: `/api/nets/${netBody.id}/handoff`,
+      body: { new_ncs_call: "W5CDN", notes: "Primary stepped away" },
+    });
+    expect(handedOff.status).toBe(200);
+    const hoBody = handedOff.body as { ncs_call: string; secondary_ncs: string };
+    expect(hoBody.ncs_call).toBe("W5CDN");
+    expect(hoBody.secondary_ncs).toBe("K5NCS");
+
+    // Clone preserves Secondary NCS
+    const cloned = await r.dispatch({ method: "POST", path: `/api/nets/${netBody.id}/clone`, body: {} });
+    expect(cloned.status).toBe(201);
+    const cloneBody = cloned.body as { ncs_call: string; secondary_ncs: string; checkins: unknown[] };
+    expect(cloneBody.ncs_call).toBe("W5CDN");
+    expect(cloneBody.secondary_ncs).toBe("K5NCS");
+    expect(cloneBody.checkins).toHaveLength(2);
+
+    // PATCH can update or clear secondary_ncs
+    const cleared = await r.dispatch({
+      method: "PATCH",
+      path: `/api/nets/${netBody.id}`,
+      body: { secondary_ncs: "" },
+    });
+    expect((cleared.body as { secondary_ncs: string }).secondary_ncs).toBe("");
+  });
 });

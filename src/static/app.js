@@ -597,6 +597,7 @@
 
         const replacements = {
           "{{NCS_CALL}}": (net && net.ncs_call) || state.config.operator_call || "W5CDN",
+          "{{SECONDARY_NCS}}": (net && net.secondary_ncs) || state.prefs?.default_secondary_ncs || "[Secondary NCS]",
           "{{NET_NAME}}": (net && net.name) || "[Net Name]",
           "{{NET_TYPE}}": (net && net.net_type) || "[Net Type]",
           "{{FREQUENCY}}": (net && net.frequency) || "[Frequency]",
@@ -1018,6 +1019,7 @@
         updateSliderTooltip("prefCallsignSize", "prefCallsignSizeTip");
 
         $("prefOperatorCall").value = p.operator_call || "";
+        $("prefDefaultSecondaryNcs").value = p.default_secondary_ncs || "";
         $("prefQrzUser").value = p.qrz_user || "";
         $("prefQrzPass").value = "";
         $("prefQrzPass").placeholder = p.qrz_pass_set
@@ -1067,6 +1069,7 @@
           font_size: Number($("prefFontSize").value),
           callsign_font_size: Number($("prefCallsignSize").value),
           operator_call: $("prefOperatorCall").value.trim().toUpperCase(),
+          default_secondary_ncs: $("prefDefaultSecondaryNcs").value.trim().toUpperCase(),
           qrz_user: $("prefQrzUser").value.trim(),
           clear_qrz_pass: $("prefClearQrzPass").checked,
           nws_county: $("prefNwsCounty").value.trim(),
@@ -1316,7 +1319,7 @@
         const visibleNets = q
           ? state.nets.filter((net) => {
               const statusWord = net.ended_at ? "closed" : "open active";
-              const hay = `${net.name} ${net.net_type} ${net.frequency} ${net.band} ${net.mode} ${net.ncs_call} ${net.started_at} ${statusWord}`.toLowerCase();
+              const hay = `${net.name} ${net.net_type} ${net.frequency} ${net.band} ${net.mode} ${net.ncs_call} ${net.secondary_ncs || ""} ${net.started_at} ${statusWord}`.toLowerCase();
               return hay.includes(q);
             })
           : state.nets;
@@ -1445,6 +1448,7 @@
 
         const specs = [
           net.ncs_call ? `<span class="net-spec-item">NCS: <strong class="mono">${escHtml(net.ncs_call)}</strong></span>` : "",
+          net.secondary_ncs ? `<span class="net-spec-item">Sec. NCS: <strong class="mono">${escHtml(net.secondary_ncs)}</strong></span>` : "",
           net.frequency ? `<span class="net-spec-item">Freq: <strong class="mono">${escHtml(net.frequency)}</strong></span>` : "",
           net.band ? `<span class="net-spec-item">Band: <strong class="mono">${escHtml(net.band)}</strong></span>` : "",
           net.mode ? `<span class="net-spec-item">Mode: <strong class="mono">${escHtml(net.mode)}</strong></span>` : "",
@@ -2061,6 +2065,7 @@
           $("netFormName").value = editNet.name || "";
           $("netFormType").value = editNet.net_type || "Club VHF/UHF";
           $("netFormNcs").value = editNet.ncs_call || state.config.operator_call;
+          $("netFormSecondaryNcs").value = editNet.secondary_ncs || "";
           $("netFormFreq").value = editNet.frequency || "";
           $("netFormBand").value = editNet.band || "";
           $("netFormMode").value = editNet.mode || "FM";
@@ -2071,6 +2076,7 @@
           $("netFormName").value = cloneSource.name || "";
           $("netFormType").value = cloneSource.net_type || "Club VHF/UHF";
           $("netFormNcs").value = cloneSource.ncs_call || state.config.operator_call;
+          $("netFormSecondaryNcs").value = cloneSource.secondary_ncs || "";
           $("netFormFreq").value = cloneSource.frequency || "";
           $("netFormBand").value = cloneSource.band || "";
           $("netFormMode").value = cloneSource.mode || "FM";
@@ -2079,6 +2085,7 @@
         } else {
           $("netForm").reset();
           $("netFormNcs").value = state.config.operator_call;
+          $("netFormSecondaryNcs").value = (state.prefs && state.prefs.default_secondary_ncs) || "";
           if (presetKey) {
             applyNetPreset(presetKey);
           } else {
@@ -2097,6 +2104,7 @@
           name: $("netFormName").value.trim(),
           net_type: $("netFormType").value,
           ncs_call: $("netFormNcs").value.trim().toUpperCase() || state.config.operator_call,
+          secondary_ncs: $("netFormSecondaryNcs").value.trim().toUpperCase(),
           frequency: $("netFormFreq").value.trim(),
           band: $("netFormBand").value.trim(),
           mode: $("netFormMode").value,
@@ -2120,7 +2128,10 @@
             closeAllModals();
             await loadNets(created.id);
             resetIdTimer(true);
-            toast(`Started net: ${created.name} (NCS ${created.ncs_call} checked in)`, "success");
+            const ncsSummary = created.secondary_ncs
+              ? `NCS ${created.ncs_call} & Sec. NCS ${created.secondary_ncs} checked in`
+              : `NCS ${created.ncs_call} checked in`;
+            toast(`Started net: ${created.name} (${ncsSummary})`, "success");
           }
         } catch (err) {
           toast(`Failed to save net: ${err.message}`, "error");
@@ -2217,6 +2228,7 @@
         const durationStr = formatDurationShort(net.started_at, net.ended_at);
         const metaParts = [
           `<span>NCS: <strong class="mono">${escHtml(net.ncs_call || state.config.operator_call)}</strong></span>`,
+          net.secondary_ncs ? `<span>Sec. NCS: <strong class="mono">${escHtml(net.secondary_ncs)}</strong></span>` : "",
           net.frequency ? `<span>Freq: <strong class="mono">${escHtml(net.frequency)}</strong></span>` : "",
           net.band ? `<span>Band: <strong class="mono">${escHtml(net.band)}</strong></span>` : "",
           net.mode ? `<span>Mode: <strong class="mono">${escHtml(net.mode)}</strong></span>` : "",
@@ -3799,11 +3811,15 @@
       // -----------------------------------------------------------------------
       function openNcsHandoffModal() {
         if (!state.activeNet) return;
-        $("ncsHandoffInfo").textContent = `Current NCS: ${state.activeNet.ncs_call}. Enter the relief operator's callsign to log a timestamped handoff and transfer net control.`;
-        $("handoffNewNcs").value = "";
+        const sec = (state.activeNet.secondary_ncs || "").trim();
+        $("ncsHandoffInfo").textContent = sec
+          ? `Current NCS: ${state.activeNet.ncs_call} • Secondary NCS: ${sec}. Confirming handoff to ${sec} transfers primary control and moves ${state.activeNet.ncs_call} to Secondary NCS.`
+          : `Current NCS: ${state.activeNet.ncs_call}. Enter the relief operator's callsign to log a timestamped handoff and transfer net control.`;
+        $("handoffNewNcs").value = sec;
         $("handoffNotes").value = "";
         $("ncsHandoffBackdrop").classList.remove("hidden");
         $("handoffNewNcs").focus();
+        if (sec) $("handoffNewNcs").select();
       }
 
       async function cloneNetSession(netId) {
@@ -4982,6 +4998,17 @@
           if (!state.editingNetId) {
             applyNetTypeDefaults($("netFormType").value, false);
           }
+        });
+        $("btnImSecondaryNcs").addEventListener("click", () => {
+          const myCall = ((state.prefs && state.prefs.operator_call) || state.config.operator_call || "").trim().toUpperCase();
+          if (myCall) {
+            $("netFormSecondaryNcs").value = myCall;
+            if ($("netFormNcs").value.trim().toUpperCase() === myCall) {
+              $("netFormNcs").value = "";
+            }
+          }
+          $("netFormNcs").focus();
+          $("netFormNcs").select();
         });
 
         $("btnExportCsv").addEventListener("click", () => downloadExport("csv"));
