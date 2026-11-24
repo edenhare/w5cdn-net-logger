@@ -9,7 +9,7 @@ export default defineConfig({
       include: ["src/electron/**/*.ts"],
       exclude: ["src/electron/main/main.ts", "src/electron/main/preload.ts"],
       thresholds: {
-        lines: 85,
+        lines: 88,
       },
     },
   },

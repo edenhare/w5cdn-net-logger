@@ -8,6 +8,7 @@ import { NetLoggerDb } from "../../src/electron/main/db";
 import { ApiRouter } from "../../src/electron/main/router";
 import { CallsignLookupService } from "../../src/electron/main/services/lookup";
 import { NwsWeatherService } from "../../src/electron/main/services/nws";
+import { startTestHttpServer } from "../../src/electron/main/testServer";
 
 function startMockBpq(): Promise<{ port: number; received: string[]; close: () => Promise<void> }> {
   const received: string[] = [];
@@ -290,5 +291,116 @@ describe("Electron Phase 2 Full Router & Services Parity", () => {
       binaryBody: badBytes,
     });
     expect(badRestore.status).toBe(400);
+  });
+
+  it("exercises remaining API routes, QRZ XML login/lookup, outbox digital staging, and testServer HTTP adapter", async () => {
+    const qrzFetch = (async (input: string | URL | Request) => {
+      const u = new URL(String(input));
+      if (u.hostname === "xmldata.qrz.com" && u.search.includes("password=")) {
+        return new Response("<QRZDatabase><Session><Key>K999</Key><SubExp>2027-01-01</SubExp></Session></QRZDatabase>");
+      }
+      if (u.hostname === "xmldata.qrz.com" && u.search.includes("callsign=W5CDN")) {
+        return new Response(
+          "<QRZDatabase><Callsign><call>W5CDN</call><fname>Eden</fname><name>Hare</name><addr2>Tyler</addr2><state>TX</state><county>Smith</county><country>USA</country><grid>EM22</grid><class>E</class></Callsign></QRZDatabase>"
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+
+    const r = new ApiRouter(db, {
+      lookup: new CallsignLookupService(qrzFetch),
+      nws: new NwsWeatherService(qrzFetch),
+      env: { OPERATOR_CALL: "W5CDN", RADIOGRAMS_DIR: path.join(tmpDir, "radiograms") },
+    });
+
+    // Health, config, unload, updates, 404
+    expect((await r.dispatch({ method: "GET", path: "/api/health" })).status).toBe(200);
+    expect((await r.dispatch({ method: "POST", path: "/api/client/unload" })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: "/api/config" })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: "/api/update/check" })).status).toBe(200);
+    expect((await r.dispatch({ method: "POST", path: "/api/update/apply" })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: "/api/does-not-exist" })).status).toBe(404);
+
+    // QRZ test & lookup
+    await r.dispatch({ method: "PUT", path: "/api/preferences", body: { qrz_user: "W5CDN", qrz_pass: "pw" } });
+    const qrzTest = await r.dispatch({ method: "POST", path: "/api/preferences/test-qrz", body: {} });
+    expect((qrzTest.body as { ok: boolean }).ok).toBe(true);
+    const look = await r.dispatch({ method: "GET", path: "/api/lookup/W5CDN?refresh=true" });
+    expect((look.body as { source: string; qth: string }).source).toBe("qrz");
+
+    // Scripts & Operators routes
+    expect((await r.dispatch({ method: "GET", path: "/api/scripts" })).status).toBe(200);
+    const sc = await r.dispatch({ method: "POST", path: "/api/scripts", body: { name: "S1", body: "Hi" } });
+    const scId = (sc.body as { id: number }).id;
+    expect((await r.dispatch({ method: "PUT", path: `/api/scripts/${scId}`, body: { name: "S2" } })).status).toBe(200);
+    expect((await r.dispatch({ method: "DELETE", path: `/api/scripts/${scId}` })).status).toBe(204);
+
+    expect((await r.dispatch({ method: "PUT", path: "/api/operators/K5ABC", body: { name: "Bob" } })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: "/api/operators?q=Bob" })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: "/api/operators/export/csv" })).status).toBe(200);
+    expect(
+      (await r.dispatch({ method: "POST", path: "/api/operators/import/csv", body: { csv_text: "call,name\nN5Z,Zed\n" } })).status
+    ).toBe(200);
+    expect((await r.dispatch({ method: "DELETE", path: "/api/operators/N5Z" })).status).toBe(204);
+
+    // Nets & Checkins routes + Outbox staging for radiogram & net report
+    const net = (await r.dispatch({ method: "POST", path: "/api/nets", body: { name: "Outbox Net" } })).body as { id: number };
+    expect((await r.dispatch({ method: "PATCH", path: `/api/nets/${net.id}`, body: { notes: "Updated" } })).status).toBe(200);
+    expect((await r.dispatch({ method: "POST", path: `/api/nets/${net.id}/close` })).status).toBe(200);
+    expect((await r.dispatch({ method: "POST", path: `/api/nets/${net.id}/reopen` })).status).toBe(200);
+    expect((await r.dispatch({ method: "POST", path: `/api/nets/${net.id}/handoff`, body: { new_ncs_call: "K5ABC" } })).status).toBe(200);
+    const cloned = await r.dispatch({ method: "POST", path: `/api/nets/${net.id}/clone`, body: {} });
+    expect(cloned.status).toBe(201);
+
+    const ci = (await r.dispatch({ method: "POST", path: `/api/nets/${net.id}/checkins`, body: { callsign: "K5ABC" } })).body as { id: number };
+    expect((await r.dispatch({ method: "POST", path: `/api/checkins/${ci.id}/heard` })).status).toBe(200);
+    expect((await r.dispatch({ method: "PATCH", path: `/api/checkins/${ci.id}`, body: { status: "MOBILE" } })).status).toBe(200);
+    expect((await r.dispatch({ method: "DELETE", path: `/api/checkins/${ci.id}` })).status).toBe(204);
+
+    await r.dispatch({
+      method: "PUT",
+      path: "/api/preferences",
+      body: {
+        digital_routing: {
+          packet_enabled: true,
+          winlink_enabled: true,
+          transport: "packet_bbs",
+          tnc_protocol: "None / Manual Relay",
+          outbox_dir: path.join(tmpDir, "outbox"),
+        },
+      },
+    });
+    expect((await r.dispatch({ method: "POST", path: "/api/preferences/test-digital-node" })).status).toBe(200);
+
+    const rg = (await r.dispatch({ method: "POST", path: "/api/radiograms", body: { net_id: net.id, message_text: "HELLO" } })).body as { id: number };
+    expect((await r.dispatch({ method: "GET", path: `/api/radiograms/${rg.id}` })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: `/api/radiograms/${rg.id}/digital` })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: `/api/radiograms/${rg.id}/text` })).status).toBe(200);
+    expect((await r.dispatch({ method: "PATCH", path: `/api/radiograms/${rg.id}`, body: { to_name: "BOB" } })).status).toBe(200);
+    expect(
+      (await r.dispatch({ method: "POST", path: `/api/radiograms/${rg.id}/push`, body: { mode: "packet", to_address: "K5ABC" } })).status
+    ).toBe(200);
+    expect((await r.dispatch({ method: "POST", path: `/api/radiograms/${rg.id}/cancel` })).status).toBe(200);
+    expect((await r.dispatch({ method: "GET", path: `/api/nets/${net.id}/export/radiograms` })).status).toBe(200);
+    expect(
+      (await r.dispatch({ method: "POST", path: `/api/nets/${net.id}/push-report`, body: { mode: "winlink", to_address: "W5CDN@WINLINK.ORG", body: "REPORT" } })).status
+    ).toBe(200);
+    expect((await r.dispatch({ method: "DELETE", path: `/api/radiograms/${rg.id}` })).status).toBe(204);
+
+    // NWS needs_location check
+    const nwsNeeds = await r.dispatch({ method: "GET", path: "/api/nws/county-report" });
+    expect((nwsNeeds.body as { needs_location: boolean }).needs_location).toBe(true);
+
+    // Exercise ephemeral HTTP test server adapter end-to-end
+    const staticDir = path.resolve("src", "net_logger", "static");
+    const srv = await startTestHttpServer(r, staticDir);
+    cleanups.push(srv.close);
+    const htmlResp = await fetch(`${srv.url}/`);
+    expect(htmlResp.status).toBe(200);
+    expect(await htmlResp.text()).toContain("W5CDN Net Logger");
+    const healthResp = await fetch(`${srv.url}/api/health`);
+    expect((await healthResp.json()).ok).toBe(true);
+    const cssResp = await fetch(`${srv.url}/static/styles.css`);
+    expect(cssResp.status).toBe(200);
   });
 });
