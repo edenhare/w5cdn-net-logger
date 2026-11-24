@@ -2,7 +2,7 @@
 
 A fast, offline-first **Local Ham Radio Net Control Logger** for **Windows** and **Linux** built with **Electron**, **TypeScript**, and **SQLite** — zero separate background server, native spellcheck, and a keyboard-first single-page UI.
 
-> Also includes the standalone **ARRL Radiogram & NTS Traffic Manager** companion desktop app in [`apps/nts-traffic/`](apps/nts-traffic/README.md).
+> Companion app: [**W5CDN NTS Traffic Manager**](https://github.com/edenhare/w5cdn-nts-traffic) (standalone Electron ARRL Radiogram & NTS Traffic Manager sharing the same `W5CDN/shared/` folder).
 
 ## Key Features
 - **Live Net Control:** Rapid callsign entry with automatic QRZ.com XML + Callook.info fallback lookup, local operator roster caching, duplicate detection, roll-call round tracking, stale-station timers, NCS handoff, and a high-visibility **FCC 10-Minute ID Timer** (turns yellow at 7:00, red at 9:30, flashing red count-up at 10:00+).
@@ -24,7 +24,8 @@ Best if you just want to download and run without installing developer tools.
 1. Download the `W5CDN Net Logger Setup *.exe` installer from the [GitHub Releases](https://github.com/edenhare/w5cdn-net-logger/releases) page.
 2. Run the installer (if Windows SmartScreen warns about an unrecognized publisher on first launch, click **More info → Run anyway**).
 3. Launch **W5CDN Net Logger** from your Start Menu or Desktop shortcut.
-   - Your SQLite database (`net_logger.db`), `radiograms/`, and `outbox/` are stored safely in your user data folder (`%APPDATA%\w5cdn-net-logger`), or in `NET_LOGGER_DATA_DIR` if set.
+   - Installs under `%LOCALAPPDATA%\Programs\W5CDN\Net-Logger` (Start Menu folder **W5CDN**, alongside **NTS** and **RadioPlanner**).
+   - Your SQLite database (`net_logger.db`) is stored in `%APPDATA%\W5CDN\Net-Logger`, while `radiograms/`, `outbox/`, and optional `config.txt` live in `%APPDATA%\W5CDN\shared` so all W5CDN apps can share them cleanly.
 
 ### Linux
 1. Download the `W5CDN Net Logger-*.AppImage` from the [GitHub Releases](https://github.com/edenhare/w5cdn-net-logger/releases) page.
@@ -33,7 +34,7 @@ Best if you just want to download and run without installing developer tools.
    chmod +x "W5CDN Net Logger-"*.AppImage
    ./"W5CDN Net Logger-"*.AppImage
    ```
-   - Data is stored in `~/.config/w5cdn-net-logger` (or `NET_LOGGER_DATA_DIR` if set).
+   - Data is stored in `~/.config/W5CDN Net Logger` (or `NET_LOGGER_DATA_DIR` if set).
 
 ---
 
@@ -83,10 +84,13 @@ When launching on a new machine, open **Preferences** (gear icon in the top bar)
 ---
 
 ## Data, Backups & Upgrading
-- All data lives locally in your data directory (`%APPDATA%\w5cdn-net-logger` for packaged Windows installs, `~/.config/w5cdn-net-logger` for packaged Linux installs, or the repo directory when running from source — override anytime with `NET_LOGGER_DATA_DIR`):
-  - `net_logger.db` (100% schema-compatible SQLite database — nets, check-ins, roster, scripts, radiograms, preferences)
-  - `radiograms/` (permanent plain-text copies of every ARRL Radiogram)
-  - `outbox/` (staged digital messages when using outbox delivery)
+- All data lives locally in the **W5CDN Suite** directory (`%APPDATA%\W5CDN\` on Windows, `~/.config/W5CDN/` on Linux — existing `%APPDATA%\w5cdn-net-logger\net_logger.db` installs are preserved automatically; override anytime with `W5CDN_SUITE_DIR` or `NET_LOGGER_DATA_DIR`):
+  - `Net-Logger/net_logger.db` (private to W5CDN Net Logger — nets, check-ins, roster, scripts, radiograms, preferences)
+  - `NTS/nts_traffic.db` (private to W5CDN NTS Traffic Manager)
+  - `RadioPlanner/` (private to W5CDN RadioPlanner)
+  - `shared/radiograms/` (shared plain-text ARRL Radiogram `.txt` archive usable across all W5CDN apps)
+  - `shared/outbox/` (shared staged digital messages when using outbox delivery)
+  - `shared/config.txt` (optional shared defaults for `OPERATOR_CALL`, `QRZ_USER`, `QRZ_PASS`, `BPQ_PASS`)
 - Use **Preferences → Operator, QRZ, Skywarn & Folders → Download Backup (`.zip`)** before upgrading or moving machines, and **Restore Backup** on the new machine.
 - Never commit `net_logger.db`, `config.txt`, `.env`, `radiograms/`, or `outbox/` to Git (all are excluded by `.gitignore`).
 
