@@ -2255,27 +2255,29 @@
         $("reportAnnouncementsSection").classList.toggle("hidden", !hasNotes);
         $("reportAnnouncementsBox").textContent = (net.notes || "").trim();
 
-        const stationNotes = checkins
-          .filter((c) => {
-            const txt = (c.comments || "").trim();
-            return c.has_traffic || (txt && txt !== "Net Control Station (NCS)");
-          })
-          .map((c) => {
-            const txt = (c.comments || "").trim();
-            const cleanTxt = txt === "Net Control Station (NCS)" ? "" : txt;
-            const who = [c.name, c.qth].filter(Boolean).join(" — ");
-            const whoStr = who ? ` (${who})` : "";
-            const tfc = c.has_traffic ? " [TRAFFIC]" : "";
-            return `[${formatUtcTime(c.checked_in_at)}] ${c.callsign}${whoStr}${tfc}: ${cleanTxt || "(Traffic flagged — no text recorded)"}`;
-          });
-        $("reportStationNotesSection").classList.toggle("hidden", !stationNotes.length);
-        $("reportStationNotesBox").textContent = stationNotes.join("\n");
-
         $("btnReportShare").classList.toggle("hidden", typeof navigator.share !== "function");
 
         const resp = await fetch(`/api/nets/${net.id}/export/summary`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        $("netReportText").value = await resp.text();
+        const summaryText = await resp.text();
+        $("netReportText").value = summaryText;
+
+        // Extract the canonical event-sorted, pipe-aligned Station Comments block for the preview card
+        const commentsHeader = "STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)";
+        let stationNotesBlock = "";
+        const secIdx = summaryText.indexOf(commentsHeader);
+        if (secIdx !== -1) {
+          const afterHeader = summaryText.slice(secIdx + commentsHeader.length);
+          const logIdx = afterHeader.indexOf("\n\nCHECK-IN LOG");
+          const rawBlock = (logIdx !== -1 ? afterHeader.slice(0, logIdx) : afterHeader).trim();
+          const blockLines = rawBlock.split(/\r?\n/);
+          stationNotesBlock = (blockLines[0] && /^-+$/.test(blockLines[0].trim())
+            ? blockLines.slice(1)
+            : blockLines).join("\n").trim();
+        }
+        $("reportStationNotesSection").classList.toggle("hidden", !stationNotesBlock);
+        $("reportStationNotesBox").textContent = stationNotesBlock;
+
         const dr = state.prefs.digital_routing || {};
         $("btnReportPushWinlink")?.classList.toggle("hidden", !dr.winlink_target_configured);
         $("btnReportPushPacket")?.classList.toggle("hidden", !dr.packet_target_configured);
