@@ -22,6 +22,22 @@ export type QueueView =
   | "archive"
   | "all";
 
+export type ThemeId =
+  | "shack-dark"
+  | "night-red"
+  | "amber-crt"
+  | "forest-eoc"
+  | "daylight"
+  | "paper-warm"
+  | "eoc-light"
+  | "sky-breeze"
+  | "high-contrast";
+
+export type UiFontId = "system" | "humanist" | "geometric" | "serif" | "mono";
+export type MonoFontId = "cascadia" | "consolas" | "courier";
+export type DigitalMethod = "bpq_telnet" | "pat" | "outbox";
+export type BpqNtsType = "SP" | "ST";
+
 export interface Radiogram {
   id: number;
   book_id: number | null;
@@ -149,13 +165,91 @@ export interface HandlingLogEntry {
   notes: string;
 }
 
+export interface DigitalRoutingSettings {
+  packet_enabled: boolean;
+  winlink_enabled: boolean;
+  method: DigitalMethod;
+  default_to: string;
+  bpq_host: string;
+  bpq_port: number;
+  bpq_bbs_cmd: string;
+  bpq_user: string;
+  bpq_pass_set: boolean;
+  bpq_nts_type: BpqNtsType;
+  bpq_wl_prefix: string;
+  bpq_webmail_url: string;
+  pat_url: string;
+  outbox_dir: string;
+}
+
 export interface AppSettings {
   operator_call: string;
   operator_qth: string;
   radiograms_dir: string;
-  theme: "shack-dark" | "daylight" | "amber-crt";
+  theme: ThemeId;
+  ui_font: UiFontId;
+  mono_font: MonoFontId;
+  font_size: number;
+  callsign_size: number;
   default_precedence: RadiogramPrecedence;
   next_msg_number: number;
+  qrz_user: string;
+  qrz_pass_set: boolean;
+  digital: DigitalRoutingSettings;
+}
+
+export interface SettingsUpdatePatch {
+  operator_call?: string;
+  operator_qth?: string;
+  radiograms_dir?: string;
+  theme?: ThemeId;
+  ui_font?: UiFontId;
+  mono_font?: MonoFontId;
+  font_size?: number;
+  callsign_size?: number;
+  default_precedence?: RadiogramPrecedence;
+  next_msg_number?: number;
+  qrz_user?: string;
+  qrz_pass?: string;
+  clear_qrz_pass?: boolean;
+  digital?: Partial<DigitalRoutingSettings> & {
+    bpq_pass?: string;
+    clear_bpq_pass?: boolean;
+  };
+}
+
+export interface CallsignLookupResult {
+  found: boolean;
+  source: "qrz" | "callook" | "none";
+  callsign: string;
+  name: string;
+  address: string;
+  city_state_zip: string;
+  qth: string;
+  grid: string;
+  email: string;
+  message?: string;
+}
+
+export interface DigitalTestResult {
+  ok: boolean;
+  message: string;
+  transcript: string;
+}
+
+export interface DigitalPushRequest {
+  radiogram_id: number;
+  mode: "packet" | "winlink";
+  to_address: string;
+  bbs_type?: BpqNtsType;
+  subject?: string;
+}
+
+export interface DigitalPushResult {
+  ok: boolean;
+  message: string;
+  transcript?: string;
+  file_path?: string;
 }
 
 export interface QueueCounts {

@@ -2,8 +2,23 @@
 const api = window.ntsApi;
 const $ = (id) => document.getElementById(id);
 
+const UI_FONT_STACKS = {
+  system: '"Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+  humanist: '"Calibri", "Trebuchet MS", "Segoe UI", sans-serif',
+  geometric: '"Verdana", "Tahoma", sans-serif',
+  serif: '"Georgia", "Cambria", serif',
+  mono: '"Cascadia Mono", "Consolas", monospace',
+};
+
+const MONO_FONT_STACKS = {
+  cascadia: '"Cascadia Mono", "JetBrains Mono", "Consolas", "Courier New", monospace',
+  consolas: '"Consolas", "Lucida Console", monospace',
+  courier: '"Courier New", monospace',
+};
+
 const state = {
   settings: null,
+  draftTheme: "shack-dark",
   queue: "needs_action",
   bookFilter: null,
   search: "",
@@ -47,6 +62,15 @@ function computeCheckLocal(text) {
   return { count: tokens.length, label: isArl && tokens.length ? `ARL ${tokens.length}` : String(tokens.length) };
 }
 
+function applyAppearance(s) {
+  const root = document.documentElement;
+  root.dataset.theme = s.theme || "shack-dark";
+  root.style.setProperty("--font-sans", UI_FONT_STACKS[s.ui_font] || UI_FONT_STACKS.system);
+  root.style.setProperty("--font-mono", MONO_FONT_STACKS[s.mono_font] || MONO_FONT_STACKS.cascadia);
+  root.style.setProperty("--font-size", `${s.font_size || 14}px`);
+  root.style.setProperty("--callsign-size", `${s.callsign_size || 15}px`);
+}
+
 let toastTimer = null;
 function showToast(msg) {
   const el = $("toast");
@@ -74,6 +98,12 @@ function alertBadgesFor(rg) {
   return badges.join(" ");
 }
 
+function syncDigitalButtonsVisibility() {
+  const d = state.settings?.digital || {};
+  $("btnPushPacket").classList.toggle("hidden", !d.packet_enabled);
+  $("btnPushWinlink").classList.toggle("hidden", !d.winlink_enabled);
+}
+
 async function refreshAll() {
   const [counts, rgs, books] = await Promise.all([
     api.getQueueCounts(),
@@ -88,6 +118,7 @@ async function refreshAll() {
 
   state.radiograms = rgs;
   state.books = books;
+  syncDigitalButtonsVisibility();
   renderBooks();
   renderTable();
   if (state.selectedId) {
@@ -137,7 +168,7 @@ function renderTable() {
           <td class="mono"><strong>${escHtml(rg.msg_number)}</strong></td>
           <td><span class="badge badge-prec-${escHtml(rg.precedence)}">${escHtml(rg.precedence)}</span></td>
           <td class="mono">${escHtml(rg.hx)}</td>
-          <td class="mono">${escHtml(rg.station_of_origin)}</td>
+          <td class="call-text">${escHtml(rg.station_of_origin)}</td>
           <td class="mono">${escHtml(rg.check_text)}</td>
           <td>${escHtml(dest || "—")}</td>
           <td><span class="badge badge-status-${escHtml(rg.status)}">${escHtml(rg.status)}</span></td>
@@ -153,6 +184,7 @@ async function renderDetail(rg) {
   $("detailContent").classList.remove("hidden");
   $("detailTitle").textContent = `NR ${rg.msg_number} (${rg.precedence}) — ${rg.to_name || rg.to_callsign || "No Addressee"}`;
   $("detailMeta").textContent = `Origin: ${rg.station_of_origin} (${rg.place_of_origin || "N/A"}) • Check: ${rg.check_text} • Status: ${rg.status}${rg.net_name ? ` • Net: ${rg.net_name}` : ""}`;
+  syncDigitalButtonsVisibility();
 
   const alerts = [];
   if (rg.svc_required && !rg.svc_sent_at && rg.status !== "CANCELLED") {
@@ -275,6 +307,116 @@ async function saveRadiogramForm(addAnother = false) {
   }
 }
 
+async function openDigitalPushModal(mode) {
+  if (!state.selectedId) return;
+  const rg = await api.getRadiogram(state.selectedId);
+  if (!rg) return;
+  const d = state.settings.digital;
+  $("pushRgId").value = String(rg.id);
+  $("pushMode").value = mode;
+  $("digitalPushTitle").textContent = mode === "packet" ? `Push NR ${rg.msg_number} via Packet BBS` : `Push NR ${rg.msg_number} via Winlink`;
+  $("pushToPacketField").classList.toggle("hidden", mode !== "packet");
+  $("pushToWinlinkField").classList.toggle("hidden", mode !== "winlink");
+  $("pushBbsTypeField").classList.toggle("hidden", mode !== "packet");
+  $("pushToPacket").value = rg.to_callsign || (d.default_to && !d.default_to.includes("@") ? d.default_to : "");
+  $("pushToWinlink").value = rg.to_email || d.default_to || "";
+  $("pushBbsType").value = d.bpq_nts_type || "SP";
+  $("pushSubject").value = await api.getDefaultBbsSubject(rg.id);
+  $("pushResultBanner").classList.add("hidden");
+  $("pushTranscript").classList.add("hidden");
+  $("digitalPushModal").classList.remove("hidden");
+}
+
+function setPrefTab(tabName) {
+  document.querySelectorAll("[data-pref-tab]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.prefTab === tabName);
+  });
+  $("prefTabAppearance").classList.toggle("hidden", tabName !== "appearance");
+  $("prefTabOperator").classList.toggle("hidden", tabName !== "operator");
+  $("prefTabDigital").classList.toggle("hidden", tabName !== "digital");
+}
+
+function updateDigitalPrefsVisibility() {
+  const pkt = $("setDigPacket").checked;
+  const wl = $("setDigWinlink").checked;
+  const any = pkt || wl;
+  $("setDigConfigBody").classList.toggle("hidden", !any);
+  const pill = $("setDigStatusPill");
+  pill.textContent = pkt && wl ? "Packet + Winlink" : pkt ? "Packet BBS" : wl ? "Winlink" : "Disabled";
+
+  const method = $("setDigMethod").value;
+  $("digPanelBpq").classList.toggle("hidden", method !== "bpq_telnet");
+  $("digPanelPat").classList.toggle("hidden", method !== "pat");
+  $("digPanelOutbox").classList.toggle("hidden", method === "bpq_telnet");
+}
+
+function updateThemeCardSelection(themeId) {
+  state.draftTheme = themeId;
+  document.querySelectorAll("[data-theme-pick]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.themePick === themeId);
+  });
+  applyAppearance({
+    theme: themeId,
+    ui_font: $("setUiFont").value,
+    mono_font: $("setMonoFont").value,
+    font_size: Number($("setFontSize").value),
+    callsign_size: Number($("setCallsignSize").value),
+  });
+}
+
+async function openPreferencesModal() {
+  const s = await api.getSettings();
+  state.settings = s;
+  state.draftTheme = s.theme;
+
+  $("setUiFont").value = s.ui_font || "system";
+  $("setMonoFont").value = s.mono_font || "cascadia";
+  $("setFontSize").value = String(s.font_size || 14);
+  $("setFontSizeVal").textContent = `${s.font_size || 14}px`;
+  $("setCallsignSize").value = String(s.callsign_size || 15);
+  $("setCallsignSizeVal").textContent = `${s.callsign_size || 15}px`;
+  updateThemeCardSelection(s.theme);
+
+  $("setOpCall").value = s.operator_call;
+  $("setOpQth").value = s.operator_qth;
+  $("setDefPrec").value = s.default_precedence;
+  $("setNextNum").value = String(s.next_msg_number);
+  $("setQrzUser").value = s.qrz_user || "";
+  $("setQrzPass").value = "";
+  $("setQrzPass").placeholder = s.qrz_pass_set ? "•••••••• (saved — leave blank to keep)" : "Enter password to save/update";
+  $("setClearQrzPass").checked = false;
+  $("qrzTestBanner").classList.add("hidden");
+  $("setRgDir").value = s.radiograms_dir;
+
+  const d = s.digital;
+  $("setDigPacket").checked = Boolean(d.packet_enabled);
+  $("setDigWinlink").checked = Boolean(d.winlink_enabled);
+  $("setDigMethod").value = d.method || "bpq_telnet";
+  $("setDigDefaultTo").value = d.default_to || "";
+  $("setBpqHost").value = d.bpq_host || "";
+  $("setBpqPort").value = String(d.bpq_port || 8010);
+  $("setBpqCmd").value = d.bpq_bbs_cmd ?? "BBS";
+  $("setBpqUser").value = d.bpq_user || "";
+  $("setBpqPass").value = "";
+  $("setBpqPass").placeholder = d.bpq_pass_set ? "•••••••• (saved — leave blank to keep)" : "Enter BBS Telnet password";
+  $("setClearBpqPass").checked = false;
+  $("setBpqNtsType").value = d.bpq_nts_type || "SP";
+  $("setBpqWlPrefix").value = d.bpq_wl_prefix ?? "RMS:";
+  $("setBpqWebmail").value = d.bpq_webmail_url || "";
+  $("setPatUrl").value = d.pat_url || "";
+  $("setOutboxDir").value = d.outbox_dir || "";
+  $("digitalTestBanner").classList.add("hidden");
+  $("digitalTestTranscript").classList.add("hidden");
+  updateDigitalPrefsVisibility();
+  setPrefTab("appearance");
+  $("settingsModal").classList.remove("hidden");
+}
+
+function closePreferencesRevert() {
+  if (state.settings) applyAppearance(state.settings);
+  $("settingsModal").classList.add("hidden");
+}
+
 async function openSarModal() {
   const now = new Date();
   const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -297,7 +439,7 @@ async function loadSarStats(month) {
 
 async function init() {
   state.settings = await api.getSettings();
-  document.documentElement.dataset.theme = state.settings.theme || "shack-dark";
+  applyAppearance(state.settings);
   $("opCallBadge").textContent = state.settings.operator_call;
   updateClock();
   setInterval(updateClock, 1000);
@@ -313,6 +455,39 @@ async function init() {
 
   document.querySelectorAll("[data-close]").forEach((btn) => {
     btn.addEventListener("click", () => $(btn.dataset.close).classList.add("hidden"));
+  });
+
+  document.querySelectorAll("[data-toggle-secret]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const inp = $(btn.dataset.toggleSecret);
+      const isHidden = inp.type === "password";
+      inp.type = isHidden ? "text" : "password";
+      btn.textContent = isHidden ? "Hide" : "Show";
+    });
+  });
+
+  document.querySelectorAll("[data-pref-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => setPrefTab(btn.dataset.prefTab));
+  });
+
+  document.querySelectorAll("[data-theme-pick]").forEach((btn) => {
+    btn.addEventListener("click", () => updateThemeCardSelection(btn.dataset.themePick));
+  });
+
+  const liveFontPreview = () => {
+    $("setFontSizeVal").textContent = `${$("setFontSize").value}px`;
+    $("setCallsignSizeVal").textContent = `${$("setCallsignSize").value}px`;
+    applyAppearance({
+      theme: state.draftTheme,
+      ui_font: $("setUiFont").value,
+      mono_font: $("setMonoFont").value,
+      font_size: Number($("setFontSize").value),
+      callsign_size: Number($("setCallsignSize").value),
+    });
+  };
+  ["setUiFont", "setMonoFont", "setFontSize", "setCallsignSize"].forEach((id) => {
+    $(id).addEventListener("input", liveFontPreview);
+    $(id).addEventListener("change", liveFontPreview);
   });
 
   document.querySelectorAll("[data-queue]").forEach((btn) => {
@@ -349,9 +524,7 @@ async function init() {
 
   $("chkSelectAll").addEventListener("change", (e) => {
     state.checkedIds.clear();
-    if (e.target.checked) {
-      state.radiograms.forEach((rg) => state.checkedIds.add(rg.id));
-    }
+    if (e.target.checked) state.radiograms.forEach((rg) => state.checkedIds.add(rg.id));
     renderTable();
   });
 
@@ -377,6 +550,18 @@ async function init() {
   $("rgForm").addEventListener("submit", (e) => {
     e.preventDefault();
     saveRadiogramForm(false);
+  });
+
+  $("btnLookupToCall").addEventListener("click", async () => {
+    const call = $("rgToCall").value.trim().toUpperCase();
+    if (!call) return showToast("Enter a callsign in To Callsign first");
+    const res = await api.lookupCallsign(call);
+    if (!res.found) return showToast(res.message || `No record for ${call}`);
+    if (res.name) $("rgToName").value = res.name;
+    if (res.address) $("rgToAddress").value = res.address;
+    if (res.city_state_zip) $("rgToCity").value = res.city_state_zip;
+    if (res.email) $("rgToEmail").value = res.email;
+    showToast(`Filled ${res.callsign} from ${res.source.toUpperCase()}`);
   });
 
   $("rgMessageText").addEventListener("input", updateComposerCheck);
@@ -422,6 +607,32 @@ async function init() {
     if (!ids.length) return showToast("No radiograms to print");
     api.printRadiograms(ids, "2up");
   });
+  $("btnPushPacket").addEventListener("click", () => openDigitalPushModal("packet"));
+  $("btnPushWinlink").addEventListener("click", () => openDigitalPushModal("winlink"));
+
+  $("digitalPushForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const mode = $("pushMode").value;
+    const to_address = mode === "packet" ? $("pushToPacket").value.trim() : $("pushToWinlink").value.trim();
+    const res = await api.pushRadiogramDigital({
+      radiogram_id: Number($("pushRgId").value),
+      mode,
+      to_address,
+      bbs_type: $("pushBbsType").value,
+      subject: $("pushSubject").value.trim(),
+    });
+    const banner = $("pushResultBanner");
+    banner.textContent = res.message;
+    banner.className = `status-banner ${res.ok ? "ok" : "err"}`;
+    const tr = $("pushTranscript");
+    tr.textContent = res.transcript || "";
+    tr.classList.toggle("hidden", !res.transcript);
+    if (res.ok) {
+      showToast(res.message);
+      await refreshAll();
+    }
+  });
+
   $("btnDeleteRg").addEventListener("click", async () => {
     if (!state.selectedId) return;
     if (!window.confirm("Delete this radiogram and its synced .txt file?")) return;
@@ -495,35 +706,119 @@ async function init() {
   $("btnSarModal").addEventListener("click", openSarModal);
   $("sarMonth").addEventListener("change", (e) => loadSarStats(e.target.value));
 
-  $("btnSettings").addEventListener("click", async () => {
-    const s = await api.getSettings();
-    $("setOpCall").value = s.operator_call;
-    $("setOpQth").value = s.operator_qth;
-    $("setNextNum").value = String(s.next_msg_number);
-    $("setTheme").value = s.theme;
-    $("setRgDir").value = s.radiograms_dir;
-    $("settingsModal").classList.remove("hidden");
-  });
+  $("btnSettings").addEventListener("click", openPreferencesModal);
+  $("btnCancelPrefs").addEventListener("click", closePreferencesRevert);
+  $("btnCancelPrefsTop").addEventListener("click", closePreferencesRevert);
+
   $("btnPickFolder").addEventListener("click", async () => {
-    const picked = await api.pickFolder();
+    const picked = await api.pickFolder("Select Shared Radiograms Routing Folder");
     if (picked) $("setRgDir").value = picked;
   });
+  $("btnPickOutbox").addEventListener("click", async () => {
+    const picked = await api.pickFolder("Select Outbox Drop Folder");
+    if (picked) $("setOutboxDir").value = picked;
+  });
+
+  $("btnExportBackup").addEventListener("click", async () => {
+    const res = await api.exportBackup();
+    showToast(res.message);
+  });
+  $("btnRestoreBackup").addEventListener("click", async () => {
+    const res = await api.restoreBackup();
+    showToast(res.message);
+    if (res.ok) {
+      state.settings = await api.getSettings();
+      applyAppearance(state.settings);
+      $("opCallBadge").textContent = state.settings.operator_call;
+      await refreshAll();
+    }
+  });
+
+  $("btnTestQrz").addEventListener("click", async () => {
+    const res = await api.testQrzLogin({
+      user: $("setQrzUser").value.trim(),
+      pass: $("setQrzPass").value,
+    });
+    const banner = $("qrzTestBanner");
+    banner.textContent = res.message;
+    banner.className = `status-banner ${res.ok ? "ok" : "err"}`;
+  });
+
+  $("setDigPacket").addEventListener("change", updateDigitalPrefsVisibility);
+  $("setDigWinlink").addEventListener("change", updateDigitalPrefsVisibility);
+  $("setDigMethod").addEventListener("change", updateDigitalPrefsVisibility);
+
+  $("btnTestDigital").addEventListener("click", async () => {
+    // Save current digital fields first so test uses current form values
+    state.settings = await api.updateSettings({
+      digital: {
+        packet_enabled: $("setDigPacket").checked,
+        winlink_enabled: $("setDigWinlink").checked,
+        method: $("setDigMethod").value,
+        default_to: $("setDigDefaultTo").value.trim(),
+        bpq_host: $("setBpqHost").value.trim(),
+        bpq_port: Number.parseInt($("setBpqPort").value, 10) || 8010,
+        bpq_bbs_cmd: $("setBpqCmd").value.trim(),
+        bpq_user: $("setBpqUser").value.trim(),
+        bpq_pass: $("setBpqPass").value || undefined,
+        clear_bpq_pass: $("setClearBpqPass").checked,
+        bpq_nts_type: $("setBpqNtsType").value,
+        bpq_wl_prefix: $("setBpqWlPrefix").value.trim(),
+        bpq_webmail_url: $("setBpqWebmail").value.trim(),
+        pat_url: $("setPatUrl").value.trim(),
+        outbox_dir: $("setOutboxDir").value.trim(),
+      },
+    });
+    const res = await api.testDigitalConnection({ bpq_pass: $("setBpqPass").value });
+    const banner = $("digitalTestBanner");
+    banner.textContent = res.message;
+    banner.className = `status-banner ${res.ok ? "ok" : "err"}`;
+    const tr = $("digitalTestTranscript");
+    tr.textContent = res.transcript || "";
+    tr.classList.toggle("hidden", !res.transcript);
+  });
+
   $("settingsForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     state.settings = await api.updateSettings({
       operator_call: $("setOpCall").value.trim(),
       operator_qth: $("setOpQth").value.trim(),
+      default_precedence: $("setDefPrec").value,
       next_msg_number: Number.parseInt($("setNextNum").value, 10) || 1,
-      theme: $("setTheme").value,
       radiograms_dir: $("setRgDir").value.trim(),
+      theme: state.draftTheme,
+      ui_font: $("setUiFont").value,
+      mono_font: $("setMonoFont").value,
+      font_size: Number($("setFontSize").value),
+      callsign_size: Number($("setCallsignSize").value),
+      qrz_user: $("setQrzUser").value.trim(),
+      qrz_pass: $("setQrzPass").value || undefined,
+      clear_qrz_pass: $("setClearQrzPass").checked,
+      digital: {
+        packet_enabled: $("setDigPacket").checked,
+        winlink_enabled: $("setDigWinlink").checked,
+        method: $("setDigMethod").value,
+        default_to: $("setDigDefaultTo").value.trim(),
+        bpq_host: $("setBpqHost").value.trim(),
+        bpq_port: Number.parseInt($("setBpqPort").value, 10) || 8010,
+        bpq_bbs_cmd: $("setBpqCmd").value.trim(),
+        bpq_user: $("setBpqUser").value.trim(),
+        bpq_pass: $("setBpqPass").value || undefined,
+        clear_bpq_pass: $("setClearBpqPass").checked,
+        bpq_nts_type: $("setBpqNtsType").value,
+        bpq_wl_prefix: $("setBpqWlPrefix").value.trim(),
+        bpq_webmail_url: $("setBpqWebmail").value.trim(),
+        pat_url: $("setPatUrl").value.trim(),
+        outbox_dir: $("setOutboxDir").value.trim(),
+      },
     });
-    document.documentElement.dataset.theme = state.settings.theme;
+    applyAppearance(state.settings);
     $("opCallBadge").textContent = state.settings.operator_call;
+    syncDigitalButtonsVisibility();
     $("settingsModal").classList.add("hidden");
-    showToast("Settings saved");
+    showToast("Preferences saved");
   });
 
-  // Keyboard shortcuts
   window.addEventListener("keydown", (e) => {
     if (e.ctrlKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
@@ -535,7 +830,8 @@ async function init() {
       e.preventDefault();
       $("btnInsertX").click();
     } else if (e.key === "Escape") {
-      ["rgModal", "bookModal", "sarModal", "settingsModal"].forEach((id) => $(id).classList.add("hidden"));
+      ["rgModal", "bookModal", "sarModal", "digitalPushModal"].forEach((id) => $(id).classList.add("hidden"));
+      if (!$("settingsModal").classList.contains("hidden")) closePreferencesRevert();
     }
   });
 

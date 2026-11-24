@@ -1,17 +1,27 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
-  AppSettings,
   BookCreateInput,
+  DigitalPushRequest,
   QueueView,
   RadiogramInput,
+  SettingsUpdatePatch,
   SvcTemplateKind,
 } from "../shared/types";
 
 const ntsApi = {
   getSettings: () => ipcRenderer.invoke("settings:get"),
-  updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
-  pickFolder: () => ipcRenderer.invoke("settings:pickFolder"),
+  updateSettings: (patch: SettingsUpdatePatch) => ipcRenderer.invoke("settings:update", patch),
+  pickFolder: (title?: string) => ipcRenderer.invoke("settings:pickFolder", title),
   openRadiogramsFolder: () => ipcRenderer.invoke("settings:openFolder"),
+  exportBackup: () => ipcRenderer.invoke("settings:exportBackup"),
+  restoreBackup: () => ipcRenderer.invoke("settings:restoreBackup"),
+
+  lookupCallsign: (callsign: string) => ipcRenderer.invoke("lookup:callsign", callsign),
+  testQrzLogin: (creds?: { user?: string; pass?: string }) => ipcRenderer.invoke("lookup:testQrz", creds),
+
+  testDigitalConnection: (override?: { bpq_pass?: string }) => ipcRenderer.invoke("digital:test", override),
+  getDefaultBbsSubject: (id: number) => ipcRenderer.invoke("digital:defaultSubject", id),
+  pushRadiogramDigital: (req: DigitalPushRequest) => ipcRenderer.invoke("digital:push", req),
 
   listArlTexts: () => ipcRenderer.invoke("arl:list"),
 

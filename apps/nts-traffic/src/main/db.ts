@@ -13,13 +13,19 @@ import {
 import type {
   AppSettings,
   BookCreateInput,
+  BpqNtsType,
+  DigitalMethod,
   HandlingLogEntry,
+  MonoFontId,
   MonthlySarStats,
   QueueCounts,
   QueueView,
   Radiogram,
   RadiogramBook,
   RadiogramInput,
+  SettingsUpdatePatch,
+  ThemeId,
+  UiFontId,
 } from "../shared/types";
 import { deleteRadiogramFile, syncRadiogramToFolder } from "./fileSync";
 
@@ -173,49 +179,162 @@ export class TrafficDatabase {
       operator_qth: "TYLER, TX",
       radiograms_dir: this.defaultRadiogramsDir,
       theme: "shack-dark",
+      ui_font: "system",
+      mono_font: "cascadia",
+      font_size: "14",
+      callsign_size: "15",
       default_precedence: "R",
       next_msg_number: "1",
+      qrz_user: "",
+      qrz_pass: "",
+      dig_packet_enabled: "0",
+      dig_winlink_enabled: "0",
+      dig_method: "bpq_telnet",
+      dig_default_to: "",
+      dig_bpq_host: "",
+      dig_bpq_port: "8010",
+      dig_bpq_bbs_cmd: "BBS",
+      dig_bpq_user: "",
+      dig_bpq_pass: "",
+      dig_bpq_nts_type: "SP",
+      dig_bpq_wl_prefix: "RMS:",
+      dig_bpq_webmail_url: "",
+      dig_pat_url: "",
+      dig_outbox_dir: path.join(path.dirname(this.dbPath), "outbox"),
     };
     for (const [k, v] of Object.entries(defaults)) {
       this.db.run("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [k, v]);
     }
   }
 
-  getSettings(): AppSettings {
+  private getRawSettingsMap(): Record<string, string> {
     const rows = this.queryAll<{ key: string; value: string }>("SELECT key, value FROM settings");
-    const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  }
+
+  getSecret(key: "qrz_pass" | "dig_bpq_pass"): string {
+    const row = this.queryOne<{ value: string }>("SELECT value FROM settings WHERE key = ?", [key]);
+    return row?.value || "";
+  }
+
+  getSettings(): AppSettings {
+    const map = this.getRawSettingsMap();
     const nextNum = Number.parseInt(map.next_msg_number || "1", 10);
+    const fontSize = Number.parseInt(map.font_size || "14", 10);
+    const callSize = Number.parseInt(map.callsign_size || "15", 10);
+    const bpqPort = Number.parseInt(map.dig_bpq_port || "8010", 10);
     return {
       operator_call: map.operator_call || "W5CDN",
       operator_qth: map.operator_qth || "",
       radiograms_dir: map.radiograms_dir || this.defaultRadiogramsDir,
-      theme: (map.theme as AppSettings["theme"]) || "shack-dark",
+      theme: (map.theme as ThemeId) || "shack-dark",
+      ui_font: (map.ui_font as UiFontId) || "system",
+      mono_font: (map.mono_font as MonoFontId) || "cascadia",
+      font_size: Number.isFinite(fontSize) ? Math.min(22, Math.max(11, fontSize)) : 14,
+      callsign_size: Number.isFinite(callSize) ? Math.min(26, Math.max(12, callSize)) : 15,
       default_precedence: (map.default_precedence as AppSettings["default_precedence"]) || "R",
       next_msg_number: Number.isFinite(nextNum) && nextNum > 0 ? nextNum : 1,
+      qrz_user: map.qrz_user || "",
+      qrz_pass_set: Boolean(map.qrz_pass),
+      digital: {
+        packet_enabled: map.dig_packet_enabled === "1",
+        winlink_enabled: map.dig_winlink_enabled === "1",
+        method: (map.dig_method as DigitalMethod) || "bpq_telnet",
+        default_to: map.dig_default_to || "",
+        bpq_host: map.dig_bpq_host || "",
+        bpq_port: Number.isFinite(bpqPort) && bpqPort > 0 && bpqPort <= 65535 ? bpqPort : 8010,
+        bpq_bbs_cmd: map.dig_bpq_bbs_cmd ?? "BBS",
+        bpq_user: map.dig_bpq_user || "",
+        bpq_pass_set: Boolean(map.dig_bpq_pass),
+        bpq_nts_type: (map.dig_bpq_nts_type as BpqNtsType) === "ST" ? "ST" : "SP",
+        bpq_wl_prefix: map.dig_bpq_wl_prefix ?? "RMS:",
+        bpq_webmail_url: map.dig_bpq_webmail_url || "",
+        pat_url: map.dig_pat_url || "",
+        outbox_dir: map.dig_outbox_dir || path.join(path.dirname(this.dbPath), "outbox"),
+      },
     };
   }
 
-  updateSettings(patch: Partial<AppSettings>): AppSettings {
-    const current = this.getSettings();
-    const merged: AppSettings = {
-      operator_call: patch.operator_call !== undefined ? cleanUpper(patch.operator_call, 24) || "W5CDN" : current.operator_call,
-      operator_qth: patch.operator_qth !== undefined ? cleanUpper(patch.operator_qth, 120) : current.operator_qth,
-      radiograms_dir: patch.radiograms_dir !== undefined ? patch.radiograms_dir.trim() || this.defaultRadiogramsDir : current.radiograms_dir,
-      theme: patch.theme || current.theme,
-      default_precedence: patch.default_precedence || current.default_precedence,
-      next_msg_number:
-        patch.next_msg_number !== undefined && Number.isFinite(patch.next_msg_number) && patch.next_msg_number > 0
-          ? Math.floor(patch.next_msg_number)
-          : current.next_msg_number,
-    };
-    for (const [k, v] of Object.entries(merged)) {
-      this.db.run(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [k, String(v)]
-      );
+  private setSetting(key: string, value: string): void {
+    this.db.run(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      [key, value]
+    );
+  }
+
+  updateSettings(patch: SettingsUpdatePatch): AppSettings {
+    if (patch.operator_call !== undefined) {
+      this.setSetting("operator_call", cleanUpper(patch.operator_call, 24) || "W5CDN");
+    }
+    if (patch.operator_qth !== undefined) {
+      this.setSetting("operator_qth", cleanUpper(patch.operator_qth, 120));
+    }
+    if (patch.radiograms_dir !== undefined) {
+      this.setSetting("radiograms_dir", patch.radiograms_dir.trim() || this.defaultRadiogramsDir);
+    }
+    if (patch.theme !== undefined) this.setSetting("theme", patch.theme);
+    if (patch.ui_font !== undefined) this.setSetting("ui_font", patch.ui_font);
+    if (patch.mono_font !== undefined) this.setSetting("mono_font", patch.mono_font);
+    if (patch.font_size !== undefined && Number.isFinite(patch.font_size)) {
+      this.setSetting("font_size", String(Math.min(22, Math.max(11, Math.round(patch.font_size)))));
+    }
+    if (patch.callsign_size !== undefined && Number.isFinite(patch.callsign_size)) {
+      this.setSetting("callsign_size", String(Math.min(26, Math.max(12, Math.round(patch.callsign_size)))));
+    }
+    if (patch.default_precedence !== undefined) this.setSetting("default_precedence", patch.default_precedence);
+    if (patch.next_msg_number !== undefined && Number.isFinite(patch.next_msg_number) && patch.next_msg_number > 0) {
+      this.setSetting("next_msg_number", String(Math.floor(patch.next_msg_number)));
+    }
+    if (patch.qrz_user !== undefined) {
+      this.setSetting("qrz_user", cleanUpper(patch.qrz_user, 32));
+    }
+    if (patch.clear_qrz_pass) {
+      this.setSetting("qrz_pass", "");
+    } else if (patch.qrz_pass) {
+      this.setSetting("qrz_pass", patch.qrz_pass);
+    }
+
+    if (patch.digital) {
+      const d = patch.digital;
+      if (d.packet_enabled !== undefined) this.setSetting("dig_packet_enabled", d.packet_enabled ? "1" : "0");
+      if (d.winlink_enabled !== undefined) this.setSetting("dig_winlink_enabled", d.winlink_enabled ? "1" : "0");
+      if (d.method !== undefined) this.setSetting("dig_method", d.method);
+      if (d.default_to !== undefined) this.setSetting("dig_default_to", d.default_to.trim());
+      if (d.bpq_host !== undefined) this.setSetting("dig_bpq_host", d.bpq_host.trim());
+      if (d.bpq_port !== undefined && Number.isFinite(d.bpq_port)) {
+        this.setSetting("dig_bpq_port", String(Math.min(65535, Math.max(1, Math.round(d.bpq_port)))));
+      }
+      if (d.bpq_bbs_cmd !== undefined) this.setSetting("dig_bpq_bbs_cmd", cleanUpper(d.bpq_bbs_cmd, 32));
+      if (d.bpq_user !== undefined) this.setSetting("dig_bpq_user", d.bpq_user.trim());
+      if (d.clear_bpq_pass) {
+        this.setSetting("dig_bpq_pass", "");
+      } else if (d.bpq_pass) {
+        this.setSetting("dig_bpq_pass", d.bpq_pass);
+      }
+      if (d.bpq_nts_type !== undefined) this.setSetting("dig_bpq_nts_type", d.bpq_nts_type === "ST" ? "ST" : "SP");
+      if (d.bpq_wl_prefix !== undefined) this.setSetting("dig_bpq_wl_prefix", cleanUpper(d.bpq_wl_prefix, 16));
+      if (d.bpq_webmail_url !== undefined) this.setSetting("dig_bpq_webmail_url", d.bpq_webmail_url.trim());
+      if (d.pat_url !== undefined) this.setSetting("dig_pat_url", d.pat_url.trim());
+      if (d.outbox_dir !== undefined) this.setSetting("dig_outbox_dir", d.outbox_dir.trim());
     }
     this.persist();
-    return merged;
+    return this.getSettings();
+  }
+
+  exportBackupBytes(): Uint8Array {
+    return this.db.export();
+  }
+
+  async restoreBackupFromFile(backupFilePath: string): Promise<void> {
+    const bytes = fs.readFileSync(backupFilePath);
+    const SQL = await initSqlJs();
+    const candidate = new SQL.Database(bytes);
+    candidate.run("PRAGMA foreign_keys = ON;");
+    candidate.run(SCHEMA_SQL);
+    this.db.close();
+    this.db = candidate;
+    this.ensureDefaultSettings();
+    this.persist();
   }
 
   private mapRadiogram(row: Record<string, unknown>): Radiogram {

@@ -1,30 +1,42 @@
+import fs from "node:fs";
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import {
   ARL_TEXTS,
   buildPrintableHtml,
   buildServiceMessageDraft,
+  currentUtcCompact,
   formatArrlBookText,
   formatArrlRadiogramText,
 } from "../shared/arrl";
 import type {
-  AppSettings,
   BookCreateInput,
+  DigitalPushRequest,
   QueueView,
   RadiogramInput,
+  SettingsUpdatePatch,
   SvcTemplateKind,
 } from "../shared/types";
 import type { TrafficDatabase } from "./db";
+import { buildNtsBbsSubject, pushRadiogramDigital, testBpqTelnetConnection } from "./digital";
+import { CallsignLookupClient } from "./lookup";
 
 export function registerIpcHandlers(
   db: TrafficDatabase,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  const lookupClient = new CallsignLookupClient();
+
   ipcMain.handle("settings:get", () => db.getSettings());
-  ipcMain.handle("settings:update", (_e, patch: Partial<AppSettings>) => db.updateSettings(patch));
-  ipcMain.handle("settings:pickFolder", async () => {
+  ipcMain.handle("settings:update", (_e, patch: SettingsUpdatePatch) => {
+    if (patch.qrz_user !== undefined || patch.qrz_pass !== undefined || patch.clear_qrz_pass) {
+      lookupClient.resetSession();
+    }
+    return db.updateSettings(patch);
+  });
+  ipcMain.handle("settings:pickFolder", async (_e, title?: string) => {
     const win = getMainWindow();
     const opts: Electron.OpenDialogOptions = {
-      title: "Select Shared Radiograms Routing Folder",
+      title: title || "Select Folder",
       properties: ["openDirectory", "createDirectory"],
     };
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
@@ -35,6 +47,96 @@ export function registerIpcHandlers(
     const { radiograms_dir } = db.getSettings();
     await shell.openPath(radiograms_dir);
     return radiograms_dir;
+  });
+  ipcMain.handle("settings:exportBackup", async () => {
+    const win = getMainWindow();
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const opts: Electron.SaveDialogOptions = {
+      title: "Export NTS Traffic Backup",
+      defaultPath: `nts_traffic_backup_${dateStamp}.db`,
+      filters: [{ name: "SQLite Database Backup", extensions: ["db"] }],
+    };
+    const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+    if (res.canceled || !res.filePath) return { ok: false, message: "Backup cancelled." };
+    fs.writeFileSync(res.filePath, Buffer.from(db.exportBackupBytes()));
+    return { ok: true, message: `Backup saved to ${res.filePath}` };
+  });
+  ipcMain.handle("settings:restoreBackup", async () => {
+    const win = getMainWindow();
+    const opts: Electron.OpenDialogOptions = {
+      title: "Restore NTS Traffic Backup (.db)",
+      properties: ["openFile"],
+      filters: [{ name: "SQLite Database Backup", extensions: ["db"] }],
+    };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    if (res.canceled || !res.filePaths.length) return { ok: false, message: "Restore cancelled." };
+    await db.restoreBackupFromFile(res.filePaths[0]);
+    lookupClient.resetSession();
+    return { ok: true, message: `Restored database from ${res.filePaths[0]}` };
+  });
+
+  ipcMain.handle("lookup:callsign", async (_e, callsign: string) => {
+    const s = db.getSettings();
+    return lookupClient.lookup(callsign, s.qrz_user, db.getSecret("qrz_pass"));
+  });
+  ipcMain.handle("lookup:testQrz", async (_e, creds?: { user?: string; pass?: string }) => {
+    const s = db.getSettings();
+    const user = creds?.user !== undefined ? creds.user : s.qrz_user;
+    const pass = creds?.pass ? creds.pass : db.getSecret("qrz_pass");
+    return lookupClient.testQrzLogin(user, pass);
+  });
+
+  ipcMain.handle("digital:test", async (_e, override?: { bpq_pass?: string }) => {
+    const s = db.getSettings();
+    if (s.digital.method === "outbox") {
+      const target = s.digital.outbox_dir || "outbox";
+      fs.mkdirSync(target, { recursive: true });
+      return { ok: true, message: `Outbox folder ready: ${target}`, transcript: "" };
+    }
+    if (s.digital.method === "pat") {
+      if (!s.digital.pat_url) {
+        return { ok: false, message: "Enter your Pat Web UI URL first.", transcript: "" };
+      }
+      try {
+        const resp = await fetch(s.digital.pat_url);
+        return {
+          ok: resp.ok,
+          message: resp.ok ? `Pat Web UI reachable (${resp.status}).` : `Pat Web UI returned HTTP ${resp.status}.`,
+          transcript: "",
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          message: `Could not reach Pat Web UI: ${err instanceof Error ? err.message : String(err)}`,
+          transcript: "",
+        };
+      }
+    }
+    const pass = override?.bpq_pass ? override.bpq_pass : db.getSecret("dig_bpq_pass");
+    return testBpqTelnetConnection(s.digital, pass);
+  });
+
+  ipcMain.handle("digital:defaultSubject", (_e, id: number) => {
+    const rg = db.getRadiogram(id);
+    if (!rg) throw new Error(`Radiogram #${id} not found`);
+    return buildNtsBbsSubject(rg);
+  });
+
+  ipcMain.handle("digital:push", async (_e, req: DigitalPushRequest) => {
+    const rg = db.getRadiogram(req.radiogram_id);
+    if (!rg) throw new Error(`Radiogram #${req.radiogram_id} not found`);
+    const s = db.getSettings();
+    const pass = db.getSecret("dig_bpq_pass");
+    const result = await pushRadiogramDigital(rg, req, s.digital, pass);
+    if (result.ok) {
+      db.updateRadiogram(rg.id, {
+        status: "RELAYED",
+        sent_to: req.to_address.trim().toUpperCase(),
+        sent_at: currentUtcCompact(),
+        sent_mode: req.mode.toUpperCase(),
+      });
+    }
+    return result;
   });
 
   ipcMain.handle("arl:list", () => ARL_TEXTS);

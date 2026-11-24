@@ -119,21 +119,70 @@ describe("TrafficDatabase & synced radiograms folder", () => {
     expect(sar.total).toBe(5);
   });
 
-  it("persists operator and folder settings", () => {
+  it("persists operator, appearance, QRZ, digital routing, and backup/restore settings", async () => {
     const customDir = path.join(tmpDir, "shared_radiograms");
+    const outboxDir = path.join(tmpDir, "outbox");
     const updated = db.updateSettings({
       operator_call: "k5abc",
       operator_qth: "Austin, TX",
       radiograms_dir: customDir,
-      theme: "daylight",
+      theme: "paper-warm",
+      ui_font: "geometric",
+      mono_font: "consolas",
+      font_size: 16,
+      callsign_size: 19,
       next_msg_number: 50,
+      qrz_user: "w5cdn",
+      qrz_pass: "secret-qrz",
+      digital: {
+        packet_enabled: true,
+        winlink_enabled: true,
+        method: "bpq_telnet",
+        default_to: "TXNTS",
+        bpq_host: "192.168.1.50",
+        bpq_port: 8010,
+        bpq_bbs_cmd: "bbs",
+        bpq_user: "W5CDN",
+        bpq_pass: "secret-bpq",
+        bpq_nts_type: "ST",
+        bpq_wl_prefix: "RMS:",
+        outbox_dir: outboxDir,
+      },
     });
     expect(updated.operator_call).toBe("K5ABC");
-    expect(updated.radiograms_dir).toBe(customDir);
-    expect(updated.next_msg_number).toBe(50);
+    expect(updated.theme).toBe("paper-warm");
+    expect(updated.ui_font).toBe("geometric");
+    expect(updated.mono_font).toBe("consolas");
+    expect(updated.font_size).toBe(16);
+    expect(updated.callsign_size).toBe(19);
+    expect(updated.qrz_user).toBe("W5CDN");
+    expect(updated.qrz_pass_set).toBe(true);
+    expect(db.getSecret("qrz_pass")).toBe("secret-qrz");
+    expect(updated.digital.packet_enabled).toBe(true);
+    expect(updated.digital.winlink_enabled).toBe(true);
+    expect(updated.digital.bpq_nts_type).toBe("ST");
+    expect(updated.digital.bpq_pass_set).toBe(true);
+    expect(db.getSecret("dig_bpq_pass")).toBe("secret-bpq");
 
     const rg = db.createRadiogram({ message_text: "TEST", to_name: "BOB" });
     expect(rg.msg_number).toBe("50");
     expect(rg.file_path.startsWith(customDir)).toBe(true);
+
+    // Export backup, clear secrets, delete radiogram, then restore backup
+    const backupFile = path.join(tmpDir, "backup.db");
+    fs.writeFileSync(backupFile, Buffer.from(db.exportBackupBytes()));
+    const cleared = db.updateSettings({
+      clear_qrz_pass: true,
+      digital: { clear_bpq_pass: true },
+    });
+    expect(cleared.qrz_pass_set).toBe(false);
+    expect(cleared.digital.bpq_pass_set).toBe(false);
+    db.deleteRadiogram(rg.id);
+    expect(db.getRadiogram(rg.id)).toBeNull();
+
+    await db.restoreBackupFromFile(backupFile);
+    expect(db.getRadiogram(rg.id)?.msg_number).toBe("50");
+    expect(db.getSettings().theme).toBe("paper-warm");
+    expect(db.getSettings().qrz_pass_set).toBe(true);
   });
 });
