@@ -2268,8 +2268,11 @@
         const secIdx = summaryText.indexOf(commentsHeader);
         if (secIdx !== -1) {
           const afterHeader = summaryText.slice(secIdx + commentsHeader.length);
-          const logIdx = afterHeader.indexOf("\n\nCHECK-IN LOG");
-          const rawBlock = (logIdx !== -1 ? afterHeader.slice(0, logIdx) : afterHeader).trim();
+          const nextIndices = ["\n\nARRL RADIOGRAMS", "\n\nCHECK-IN LOG"]
+            .map((marker) => afterHeader.indexOf(marker))
+            .filter((idx) => idx !== -1);
+          const stopIdx = nextIndices.length ? Math.min(...nextIndices) : -1;
+          const rawBlock = (stopIdx !== -1 ? afterHeader.slice(0, stopIdx) : afterHeader).trim();
           const blockLines = rawBlock.split(/\r?\n/);
           stationNotesBlock = (blockLines[0] && /^-+$/.test(blockLines[0].trim())
             ? blockLines.slice(1)
