@@ -14,21 +14,22 @@ const MAIN_CODE_RE =
   /^(src\/(electron|static)\/.*|tests\/electron\/.*|scripts\/.*\.mjs|package\.json|tsconfig\.json|vitest\.config\.ts)$/;
 const MAX_FILE_BYTES = 1000 * 1024;
 
+function runNpm(args, opts = {}) {
+  const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  const cmd = process.platform === "win32" && fs.existsSync(npmCli) ? process.execPath : "npm";
+  const finalArgs = cmd === process.execPath ? [npmCli, ...args] : args;
+  runCmd(cmd, finalArgs, opts);
+}
+
 function runCmd(cmd, args, opts = {}) {
-  const isWin = process.platform === "win32";
   const res = spawnSync(cmd, args, {
     stdio: "inherit",
-    shell: isWin && cmd.toLowerCase().endsWith(".cmd"),
     ...opts,
   });
   if (res.error) throw res.error;
   if (res.status !== 0) {
     process.exit(res.status ?? 1);
   }
-}
-
-function npmBin() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 export function validateCommitMessage(rawMessage) {
@@ -102,15 +103,14 @@ function runPreCommit() {
     process.exit(1);
   }
 
-  const npm = npmBin();
   if (staged.some((f) => MAIN_CODE_RE.test(f)) && fs.existsSync("node_modules")) {
-    runCmd(npm, ["run", "typecheck"]);
-    runCmd(npm, ["test"]);
+    runNpm(["run", "typecheck"]);
+    runNpm(["test"]);
   }
 
   if (staged.some((f) => f.startsWith("apps/nts-traffic/")) && fs.existsSync(path.join("apps", "nts-traffic", "node_modules"))) {
-    runCmd(npm, ["--prefix", "apps/nts-traffic", "run", "typecheck"]);
-    runCmd(npm, ["--prefix", "apps/nts-traffic", "test"]);
+    runNpm(["--prefix", "apps/nts-traffic", "run", "typecheck"]);
+    runNpm(["--prefix", "apps/nts-traffic", "test"]);
   }
 }
 
@@ -128,10 +128,9 @@ function runCommitMsg(msgFile) {
 }
 
 function runPrePush() {
-  const npm = npmBin();
   runCmd(process.execPath, ["scripts/bump-version.mjs", "--check"]);
-  runCmd(npm, ["run", "typecheck"]);
-  runCmd(npm, ["run", "test:cov"]);
+  runNpm(["run", "typecheck"]);
+  runNpm(["run", "test:cov"]);
 }
 
 function main() {
