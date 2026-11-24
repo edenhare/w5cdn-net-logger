@@ -4,16 +4,21 @@ const QRZ_URL = "https://xmldata.qrz.com/xml/current/";
 const CALLOOK_URL = "https://callook.info";
 const USER_AGENT = "W5CDN-NTSTraffic/0.1.0";
 
+const XML_ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&apos;": "'",
+};
+
 function extractXmlTag(xml: string, tag: string): string {
   const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
   const m = re.exec(xml);
   if (!m) return "";
   return m[1]
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&(amp|lt|gt|quot|apos|#39);/g, (entity) => XML_ENTITIES[entity] ?? entity)
     .trim();
 }
 

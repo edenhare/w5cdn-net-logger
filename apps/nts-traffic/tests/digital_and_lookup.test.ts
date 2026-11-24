@@ -111,20 +111,20 @@ describe("QRZ / Callook lookup & Digital Packet/Winlink delivery", () => {
 
   it("supports QRZ XML login + lookup and Callook.info fallback", async () => {
     const mockFetch = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes("xmldata.qrz.com") && url.includes("password=")) {
+      const parsed = new URL(String(input));
+      if (parsed.hostname === "xmldata.qrz.com" && parsed.search.includes("password=")) {
         return new Response(
           "<QRZDatabase><Session><Key>KEY123</Key><SubExp>2027-01-01</SubExp></Session></QRZDatabase>",
           { status: 200 }
         );
       }
-      if (url.includes("xmldata.qrz.com") && url.includes("callsign=W5CDN")) {
+      if (parsed.hostname === "xmldata.qrz.com" && parsed.search.includes("callsign=W5CDN")) {
         return new Response(
           "<QRZDatabase><Callsign><call>W5CDN</call><fname>Eden</fname><name>Hare</name><addr1>100 Main</addr1><addr2>Tyler</addr2><state>TX</state><zip>75701</zip><grid>EM22</grid><email>w5cdn@example.org</email></Callsign></QRZDatabase>",
           { status: 200 }
         );
       }
-      if (url.includes("callook.info/K5TST/json")) {
+      if (parsed.hostname === "callook.info" && parsed.pathname === "/K5TST/json") {
         return new Response(
           JSON.stringify({
             status: "VALID",
