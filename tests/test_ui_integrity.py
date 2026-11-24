@@ -210,6 +210,13 @@ def test_traffic_and_message_inputs_enable_spellcheck() -> None:
         )
 
 
+def test_quick_radiogram_and_add_another_controls_exist() -> None:
+    """Issue #49: ensure Station Notes modal has quick Radiogram button and Editor has Save & Add Another."""
+    inspector = _inspect_index_html()
+    for el_id in ("btnQuickNoteRadiogram", "quickNoteRgBadge", "btnSaveAndAddAnotherRg"):
+        assert el_id in inspector.ids, f"Missing expected Issue #49 control #{el_id} in index.html"
+
+
 def test_linux_shell_scripts_use_lf_line_endings() -> None:
     for rel in ("start.sh", "scripts/install_linux_desktop.sh"):
         script_path = PROJECT_ROOT / rel

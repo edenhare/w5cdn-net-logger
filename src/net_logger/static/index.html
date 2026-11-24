@@ -1746,9 +1746,15 @@
             Flag station as holding Traffic
           </label>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn" data-close-modal="quickNoteBackdrop">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Comments</button>
+        <div class="modal-footer" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-amber btn-sm" id="btnQuickNoteRadiogram" title="Log an ARRL Radiogram received from this station">+ New Radiogram</button>
+            <span class="pill pill-rg hidden" id="quickNoteRgBadge"></span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn" data-close-modal="quickNoteBackdrop">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Comments</button>
+          </div>
         </div>
       </form>
     </div>
@@ -1954,8 +1960,9 @@
         </div>
         <div class="modal-footer" style="justify-content:space-between; flex-wrap:wrap;">
           <button type="button" class="btn" id="btnPrintRadiogram" title="Print official formatted ARRL Radiogram form">Print Form</button>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button type="button" class="btn" data-close-modal="radiogramEditorBackdrop">Cancel</button>
+            <button type="button" class="btn btn-amber" id="btnSaveAndAddAnotherRg" title="Save this radiogram and immediately start another from the same station">Save &amp; Add Another</button>
             <button type="submit" class="btn btn-primary">Save Radiogram</button>
           </div>
         </div>
