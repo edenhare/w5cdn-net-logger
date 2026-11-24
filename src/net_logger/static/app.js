@@ -112,7 +112,7 @@
       }
 
       const state = {
-        config: { operator_call: "W5CDN", qrz_configured: false, version: "0.1.8" },
+        config: { operator_call: "W5CDN", qrz_configured: false, version: "0.1.9" },
         prefs: {
           theme: "shack-dark",
           ui_font: "system",
@@ -4097,7 +4097,7 @@
         const bannerBtn = $("btnUpdateBanner");
         if (!verEl || !modeEl || !statusEl) return;
 
-        const curVer = info?.current_version || state.config?.version || "0.1.8";
+        const curVer = info?.current_version || state.config?.version || "0.1.9";
         const mode = info?.install_mode || state.config?.install_mode || "source";
         const modeLabel = {
           standalone: "STANDALONE",
