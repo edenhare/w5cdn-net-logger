@@ -48,6 +48,7 @@ class _IndexHtmlInspector(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.ids: set[str] = set()
+        self.attrs_by_id: dict[str, dict[str, str]] = {}
         self.duplicate_ids: list[str] = []
         self.inline_event_attrs: list[str] = []
         self.unsafe_links: list[str] = []
@@ -61,6 +62,7 @@ class _IndexHtmlInspector(HTMLParser):
             if el_id in self.ids:
                 self.duplicate_ids.append(el_id)
             self.ids.add(el_id)
+            self.attrs_by_id[el_id] = attr_map
         for key, val in attr_map.items():
             if key.startswith("on"):
                 self.inline_event_attrs.append(f"<{tag} {key}=...> (line {self.getpos()[0]})")
@@ -187,6 +189,25 @@ def test_checkin_actions_column_has_right_edge_padding() -> None:
     assert int(pad_match.group(1)) >= 20, "Expected at least 20px right padding on .col-actions"
     width_match = re.search(r"width\s*:\s*(\d+)px", rule_body)
     assert width_match is not None and int(width_match.group(1)) >= 168
+
+
+def test_traffic_and_message_inputs_enable_spellcheck() -> None:
+    """Issue #45: ensure traffic, comment, and radiogram message fields enable spellcheck."""
+    inspector = _inspect_index_html()
+    expected_ids = (
+        "inComments",
+        "netFormNotes",
+        "editComments",
+        "quickNoteText",
+        "rgMessageText",
+        "rgNotes",
+        "mrMessageText",
+    )
+    for el_id in expected_ids:
+        assert el_id in inspector.attrs_by_id, f"Missing expected input #{el_id} in index.html"
+        assert inspector.attrs_by_id[el_id].get("spellcheck") == "true", (
+            f"Input #{el_id} must set spellcheck='true'"
+        )
 
 
 def test_linux_shell_scripts_use_lf_line_endings() -> None:
