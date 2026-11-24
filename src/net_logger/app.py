@@ -13,6 +13,7 @@ import re
 import sqlite3
 import sys
 import tempfile
+import textwrap
 import threading
 import xml.etree.ElementTree as ET
 import zipfile
@@ -2893,6 +2894,118 @@ def compute_monthly_operator_hours(conn: sqlite3.Connection, month: str) -> floa
     return round(total, 2)
 
 
+def _format_station_comment_events_block(
+    report_events: list[dict[str, Any]],
+    *,
+    max_width: int = 88,
+) -> list[str]:
+    """Format chronologically sorted station events as 'UTC | CALLSIGN | Message — Location' with aligned wrapping."""
+    if not report_events:
+        return []
+    call_w = max(8, max(len(str(ev.get("callsign") or "")) for ev in report_events))
+    cont_prefix = f"{'':6}   {'':<{call_w}} | "
+    wrap_w = max(36, max_width - len(cont_prefix))
+    out: list[str] = []
+
+    for ev in report_events:
+        time_lbl = str(ev.get("time_label") or "--:--Z")
+        call_lbl = str(ev.get("callsign") or "")
+        loc_lbl = str(ev.get("location") or "").strip()
+        first_prefix = f"{time_lbl:<6} | {call_lbl:<{call_w}} | "
+        body_lines = [ln.strip() for ln in (ev.get("body_lines") or []) if ln.strip()]
+
+        if not body_lines:
+            paragraphs = [loc_lbl] if loc_lbl else [""]
+        else:
+            paragraphs = list(body_lines)
+            if loc_lbl and loc_lbl != "Location N/A":
+                paragraphs[-1] = f"{paragraphs[-1]} — {loc_lbl}"
+
+        first_emitted = False
+        for para in paragraphs:
+            chunks = (
+                textwrap.wrap(
+                    para,
+                    width=wrap_w,
+                    break_long_words=False,
+                    break_on_hyphens=False,
+                )
+                or [""]
+            )
+            for chunk in chunks:
+                prefix = first_prefix if not first_emitted else cont_prefix
+                out.append(f"{prefix}{chunk}".rstrip())
+                first_emitted = True
+    return out
+
+
+def _format_checkin_traffic_lines(
+    checkin: dict[str, Any],
+    *,
+    max_width: int = 88,
+) -> list[str]:
+    """Format traffic/comment lines underneath a check-in row, aligned to UTC (col 5) or CALLSIGN (col 15)."""
+    utc_indent = " " * 5
+    call_indent = " " * 15
+    wrap_w = max(36, max_width - len(call_indent))
+    station_call = (checkin.get("callsign") or "").strip().upper()
+    races_tag = f"[RACES:{checkin['races_id']}] " if checkin.get("races_id") else ""
+    traffic_tag = "[TFC] " if checkin.get("has_traffic") else ""
+
+    raw_lines = [
+        ln.strip()
+        for ln in (checkin.get("comments") or "").splitlines()
+        if ln.strip() and ln.strip() != "Net Control Station (NCS)"
+    ]
+
+    if not raw_lines:
+        if not (races_tag or traffic_tag):
+            return []
+        fallback = "(Traffic flagged — no comment text recorded)" if traffic_tag else ""
+        text = f"{races_tag}{traffic_tag}{fallback}".strip()
+        return [
+            f"{call_indent}{chunk}"
+            for chunk in (
+                textwrap.wrap(text, width=wrap_w, break_long_words=False, break_on_hyphens=False)
+                or [text]
+            )
+        ]
+
+    out: list[str] = []
+    prefix_pending = f"{races_tag}{traffic_tag}"
+    for stripped in raw_lines:
+        ev_time = ""
+        body = stripped
+        m = EVENT_TIME_RE.match(stripped)
+        if m:
+            hh, mm = int(m.group(1)), int(m.group(2))
+            if 0 <= hh <= 23 and 0 <= mm <= 59:
+                ev_time = f"{hh:02d}:{mm:02d}Z"
+                body = stripped[m.end() :].strip()
+                # Strip redundant leading station callsign already shown on the row above
+                if station_call:
+                    cm = EVENT_CALL_RE.match(body)
+                    if cm and cm.group(1).upper() == station_call:
+                        body = body[cm.end() :].strip()
+
+        if prefix_pending:
+            body = f"{prefix_pending}{body}".strip()
+            prefix_pending = ""
+
+        chunks = (
+            textwrap.wrap(body, width=wrap_w, break_long_words=False, break_on_hyphens=False)
+            or [""]
+        )
+        if ev_time:
+            out.append(f"{utc_indent}{ev_time:<8}  {chunks[0]}".rstrip())
+            for cont in chunks[1:]:
+                out.append(f"{call_indent}{cont}".rstrip())
+        else:
+            for chunk in chunks:
+                out.append(f"{call_indent}{chunk}".rstrip())
+    return out
+
+
 def build_summary_export(
     net: dict[str, Any],
     checkins: list[dict[str, Any]],
@@ -2960,37 +3073,26 @@ def build_summary_export(
             [
                 "",
                 "STATION COMMENTS & WEATHER REPORTS (BY TIME OF EVENT)",
-                "-" * 64,
+                "-" * 88,
             ]
         )
-        for ev in report_events:
-            if ev["body_lines"]:
-                lines.append(
-                    f"- {ev['time_label']} | {ev['body_lines'][0]} | {ev['location']} | {ev['callsign']}"
-                )
-                for sub_line in ev["body_lines"][1:]:
-                    lines.append(f"    {sub_line}")
-            else:
-                lines.append(f"- {ev['time_label']} | {ev['location']} | {ev['callsign']}")
+        lines.extend(_format_station_comment_events_block(report_events, max_width=88))
 
     lines.extend(
         [
             "",
             "CHECK-IN LOG",
-            f"{'#':>3}  {'UTC':<8}  {'CALLSIGN':<12}  {'NAME':<18}  {'QTH':<20}  {'STATUS':<11}  NOTES",
-            "-" * 96,
+            f"{'#':>3}  {'UTC':<8}  {'CALLSIGN':<12}  {'NAME':<18}  {'QTH':<20}  {'STATUS':<11}",
+            "-" * 88,
         ]
     )
     for idx, c in enumerate(checkins, start=1):
         time_hhmm = c["checked_in_at"][11:16] + "Z" if len(c["checked_in_at"]) >= 16 else ""
-        races_tag = f"[RACES:{c['races_id']}] " if c.get("races_id") else ""
-        traffic_tag = "[TFC] " if c["has_traffic"] else ""
-        flat_comments = " ".join((c["comments"] or "").split())
-        note_text = f"{races_tag}{traffic_tag}{flat_comments}".strip()
         lines.append(
             f"{idx:>3}  {time_hhmm:<8}  {c['callsign']:<12}  {c['name'][:18]:<18}  "
-            f"{c['qth'][:20]:<20}  {c['status']:<11}  {note_text}"
+            f"{c['qth'][:20]:<20}  {c['status']:<11}".rstrip()
         )
+        lines.extend(_format_checkin_traffic_lines(c, max_width=88))
 
     if rg_list:
         lines.append("")

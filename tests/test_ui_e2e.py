@@ -8,6 +8,7 @@ Skipped automatically when Playwright is not installed (e.g., standard unit-test
 
 from __future__ import annotations
 
+import re
 import socket
 import threading
 import time
@@ -279,14 +280,34 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             k5_row.locator('[data-action="toggle-out"]').click()
             k5_row.locator('[data-action="toggle-out"]').click()
 
-            # 4. Form 3 (#quickNoteForm)
+            # 4. Form 3 (#quickNoteForm) — auto-inserts current UTC timestamp on open
             k5_row.locator('button[data-action="quick-note"]').click()
             page.locator("#quickNoteBackdrop").wait_for(state="visible", timeout=5000)
+            initial_note = page.locator("#quickNoteText").input_value()
+            assert re.fullmatch(r"\[\d{2}:\d{2}Z\]\s*", initial_note)
+            assert page.locator("#quickNoteText").get_attribute("spellcheck") == "true"
+            # Clicking a quick-tag chip replaces the bare trailing timestamp cleanly (no duplicate empty line)
             page.locator('#quickNoteChips [data-note-stamp="[WX] "]').click()
-            page.fill("#quickNoteText", page.locator("#quickNoteText").input_value() + "Wind gusts 45 mph")
+            after_chip = page.locator("#quickNoteText").input_value()
+            assert "\n" not in after_chip and "[WX]" in after_chip
+            page.fill("#quickNoteText", after_chip + "Wind gusts 45 mph")
             page.click('#quickNoteForm button[type="submit"]')
             page.locator("#quickNoteBackdrop").wait_for(state="hidden", timeout=5000)
             page.locator("#checkinsTbody tr", has_text="Wind gusts 45 mph").wait_for(state="visible", timeout=5000)
+
+            # Re-opening appends a new timestamped line; saving without typing strips the bare trailing stamp
+            k5_row.locator('button[data-action="quick-note"]').click()
+            page.locator("#quickNoteBackdrop").wait_for(state="visible", timeout=5000)
+            reopened_note = page.locator("#quickNoteText").input_value()
+            assert re.search(r"Wind gusts 45 mph\n\[\d{2}:\d{2}Z\]\s*$", reopened_note)
+            page.click('#quickNoteForm button[type="submit"]')
+            page.locator("#quickNoteBackdrop").wait_for(state="hidden", timeout=5000)
+            k5_row.locator('button[data-action="quick-note"]').click()
+            page.locator("#quickNoteBackdrop").wait_for(state="visible", timeout=5000)
+            reopened_again = page.locator("#quickNoteText").input_value()
+            assert len(reopened_again.splitlines()) == 2
+            page.locator('#quickNoteBackdrop [data-close-modal="quickNoteBackdrop"]').first.click()
+            page.locator("#quickNoteBackdrop").wait_for(state="hidden", timeout=5000)
 
             # 5. Form 4 (#editCheckinForm)
             k5_row.locator('button[data-action="edit"]').click()
@@ -314,6 +335,8 @@ def test_ui_e2e_all_forms_modals_and_live_bpq(live_app_server: str) -> None:
             page.locator("#netReportBackdrop").wait_for(state="visible", timeout=5000)
             report_text = page.locator("#netReportText").input_value()
             assert "Travis County RACES Net" in report_text and "K5TST" in report_text and "TX-104" in report_text
+            notes_box = page.locator("#reportStationNotesBox").inner_text()
+            assert "| K5TST" in notes_box and "Wind gusts 45 mph" in notes_box
             page.locator('#netReportBackdrop [data-close-modal="netReportBackdrop"]').first.click()
             page.locator("#netReportBackdrop").wait_for(state="hidden", timeout=3000)
 
