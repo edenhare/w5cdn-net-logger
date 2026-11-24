@@ -13,7 +13,7 @@ import type {
   UiFontName,
 } from "./types";
 
-export const APP_VERSION = "0.1.10";
+export const APP_VERSION = "0.2.0";
 export const APP_TITLE = "W5CDN Net Logger";
 
 export const VALID_THEMES = new Set<ThemeName>([
