@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "net-logger"
-version = "0.1.7"
+version = "0.1.8"
 description = "W5CDN Net Logger — Local Ham Radio Net Control, Skywarn, RACES & NTS Logger"
 requires-python = ">=3.11"
 dependencies = [
