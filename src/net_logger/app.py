@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from net_logger import updater
 
-APP_VERSION = "0.1.9"
+APP_VERSION = "0.1.10"
 APP_TITLE = "W5CDN Net Logger"
 
 
