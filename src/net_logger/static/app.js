@@ -2433,10 +2433,12 @@
         if (!c) return;
         $("quickNoteCheckinId").value = String(c.id);
         $("quickNoteTitle").textContent = `${c.callsign}${c.name ? ` (${c.name})` : ""} — Comments / WX Report`;
-        $("quickNoteText").value = c.comments || "";
+        const existing = (c.comments || "").trimEnd();
+        const stampPrefix = `[${currentUtcStamp()}] `;
+        const ta = $("quickNoteText");
+        ta.value = existing ? `${existing}\n${stampPrefix}` : stampPrefix;
         $("quickNoteTraffic").checked = Boolean(c.has_traffic);
         $("quickNoteBackdrop").classList.remove("hidden");
-        const ta = $("quickNoteText");
         ta.focus();
         ta.setSelectionRange(ta.value.length, ta.value.length);
       }
@@ -4636,8 +4638,11 @@
           if (loc) parts.push(`[LOC: ${loc}]`);
           if (tag) parts.push(tag);
           const prefix = `${parts.join(" ")} `;
-          const needsNewline = ta.value.length > 0 && !ta.value.endsWith("\n");
-          ta.value = ta.value + (needsNewline ? "\n" : "") + prefix;
+          const base = ta.value.replace(/(?:^|\n)\[\d{2}:\d{2}Z\]\s*$/, (m) =>
+            m.startsWith("\n") ? "\n" : ""
+          );
+          const needsNewline = base.length > 0 && !base.endsWith("\n");
+          ta.value = base + (needsNewline ? "\n" : "") + prefix;
           ta.focus();
           ta.setSelectionRange(ta.value.length, ta.value.length);
         }
@@ -4667,8 +4672,11 @@
           const id = Number($("quickNoteCheckinId").value);
           if (!id) return;
           try {
+            const cleanedComments = $("quickNoteText").value
+              .replace(/(?:^|\n)\[\d{2}:\d{2}Z\]\s*$/, "")
+              .trim();
             await patchCheckin(id, {
-              comments: $("quickNoteText").value.trim(),
+              comments: cleanedComments,
               has_traffic: $("quickNoteTraffic").checked,
             });
             $("quickNoteBackdrop").classList.add("hidden");
