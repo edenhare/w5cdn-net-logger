@@ -22,7 +22,7 @@
     "@types/node": "^22.10.0",
     "@types/sql.js": "^1.4.9",
     "electron": "^35.0.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   },
