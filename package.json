@@ -1,6 +1,6 @@
 {
   "name": "w5cdn-net-logger",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local Ham Radio Net Control Logger (Electron + TypeScript + SQLite)",
   "author": "W5CDN / Eden Hare",
   "main": "dist/main/main.js",
