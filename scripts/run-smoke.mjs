@@ -5,18 +5,25 @@ import os from "node:os";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const electronExe = require("electron");
+const packagedExe = process.argv[2] ? path.resolve(process.argv[2]) : null;
+const exePath = packagedExe || require("electron");
+const exeArgs = packagedExe ? [] : ["."];
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "net-logger-smoke-"));
 
 try {
-  execFileSync(electronExe, ["."], {
-    stdio: "inherit",
+  const output = execFileSync(exePath, exeArgs, {
+    encoding: "utf-8",
+    timeout: 45_000,
     env: {
       ...process.env,
       NET_LOGGER_SMOKE_TEST: "1",
       NET_LOGGER_DATA_DIR: tmpDir,
     },
   });
+  process.stdout.write(output);
+  if (!output.includes("ELECTRON_NET_LOGGER_SMOKE_OK")) {
+    throw new Error("Smoke test did not emit ELECTRON_NET_LOGGER_SMOKE_OK");
+  }
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }

@@ -392,7 +392,7 @@ describe("Electron Phase 2 Full Router & Services Parity", () => {
     expect((nwsNeeds.body as { needs_location: boolean }).needs_location).toBe(true);
 
     // Exercise ephemeral HTTP test server adapter end-to-end
-    const staticDir = path.resolve("src", "net_logger", "static");
+    const staticDir = path.resolve("src", "static");
     const srv = await startTestHttpServer(r, staticDir);
     cleanups.push(srv.close);
     const htmlResp = await fetch(`${srv.url}/`);

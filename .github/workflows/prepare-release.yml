@@ -13,7 +13,7 @@ on:
           - minor
           - major
       custom_version:
-        description: "Optional explicit X.Y.Z version (overrides bump, e.g. 1.0.0)"
+        description: "Optional explicit X.Y.Z version (overrides bump, e.g. 0.2.0)"
         type: string
         required: false
         default: ""
@@ -35,24 +35,29 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Bump version across project files
         id: bump
         env:
           BUMP_KIND: ${{ inputs.bump }}
           CUSTOM_VERSION: ${{ inputs.custom_version }}
         run: |
-          CURRENT="$(python3 scripts/bump_version.py --print-current)"
+          CURRENT="$(node scripts/bump-version.mjs --print-current)"
           if [ -n "${CUSTOM_VERSION}" ]; then
-            NEW_VERSION="$(python3 scripts/bump_version.py --version "${CUSTOM_VERSION}")"
+            NEW_VERSION="$(node scripts/bump-version.mjs --version "${CUSTOM_VERSION}")"
           else
-            NEW_VERSION="$(python3 scripts/bump_version.py --bump "${BUMP_KIND}")"
+            NEW_VERSION="$(node scripts/bump-version.mjs --bump "${BUMP_KIND}")"
           fi
           TAG="v${NEW_VERSION}"
           if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Error: Git tag ${TAG} already exists." >&2
             exit 1
           fi
-          python3 scripts/bump_version.py --check
+          node scripts/bump-version.mjs --check
           echo "current=${CURRENT}" >> "$GITHUB_OUTPUT"
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -62,7 +67,7 @@ jobs:
         env:
           NEW_TAG: ${{ steps.bump.outputs.tag }}
         run: |
-          python3 scripts/generate_changelog.py \
+          node scripts/generate-changelog.mjs \
             --version "${NEW_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --output release-preview.md
@@ -76,7 +81,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "${BRANCH}"
-          git add pyproject.toml src/net_logger/app.py src/net_logger/static/app.js src/net_logger/static/index.html
+          git add package.json package-lock.json src/electron/shared/defaults.ts src/static/app.js src/static/index.html
           git commit -m "chore(release): prepare ${NEW_TAG}"
           git push --force-with-lease origin "${BRANCH}"
 
@@ -123,7 +128,7 @@ jobs:
               '',
               '**What happens when you merge this PR:**',
               `1. The **Publish Release** workflow automatically tags \`main\` with \`${newTag}\`.`,
-              `2. Full CI, standalone Windows/Linux PyInstaller builds (with detached Windows GUI smoke test), \`CHANGELOG.md\`, and \`SHA256SUMS.txt\` run automatically.`,
+              `2. Standalone Electron installers (Windows NSIS \`.exe\` + Linux \`.AppImage\`), \`CHANGELOG.md\`, and \`SHA256SUMS.txt\` build and smoke-test automatically.`,
               `3. GitHub Release \`${newTag}\` is published with all release assets.`,
               ciNote,
               '### Changelog Preview',
@@ -140,7 +145,6 @@ jobs:
             });
 
             let prNumber;
-            let prUrl;
             if (existing.data.length > 0) {
               const pr = existing.data[0];
               await github.rest.pulls.update({
@@ -151,7 +155,6 @@ jobs:
                 body,
               });
               prNumber = pr.number;
-              prUrl = pr.html_url;
             } else {
               const created = await github.rest.pulls.create({
                 owner,
@@ -162,7 +165,6 @@ jobs:
                 body,
               });
               prNumber = created.data.number;
-              prUrl = created.data.html_url;
             }
 
             await github.rest.issues.addLabels({
@@ -171,11 +173,3 @@ jobs:
               issue_number: prNumber,
               labels: ['release'],
             });
-
-            if (process.env.GITHUB_STEP_SUMMARY) {
-              fs.appendFileSync(
-                process.env.GITHUB_STEP_SUMMARY,
-                `## Release PR Ready: ${newTag}\n\n- **PR:** ${prUrl}\n- **Version:** \`${currentVer}\` → \`${newVer}\`\n- Merge the PR to automatically tag \`${newTag}\` and publish the standalone release.\n`,
-                'utf8',
-              );
-            }

@@ -13,7 +13,6 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=1000"]
       - id: check-yaml
-      - id: check-toml
       - id: check-json
       - id: check-merge-conflict
       - id: detect-private-key
@@ -24,19 +23,6 @@ repos:
       - id: mixed-line-ending
         args: ["--fix=lf"]
         files: ^(start\.sh|scripts/install_linux_desktop\.sh|\.github/.*\.ya?ml|\.pre-commit-config\.yaml)$
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.10
-    hooks:
-      - id: ruff
-        args: ["--fix", "--exit-non-zero-on-fix"]
-
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.3
-    hooks:
-      - id: bandit
-        args: ["-ll"]
-        files: ^(src/net_logger/.*|scripts/build_standalone)\.py$
 
   - repo: local
     hooks:
@@ -49,22 +35,13 @@ repos:
           sys.exit('Blocked sensitive/runtime files: ' + ', '.join(bad)) if bad else None"
         pass_filenames: true
 
-      - id: ui-and-code-quality
-        name: Static HTML/CSS/JS integrity & exception quality checks
-        language: python
-        additional_dependencies:
-          - pytest>=8.3.0
-        entry: pytest --noconftest -o addopts="" tests/test_ui_integrity.py tests/test_code_quality.py -q
-        pass_filenames: false
-        files: ^(src/net_logger/.*|start\.sh|scripts/install_linux_desktop\.sh|tests/test_(ui_integrity|code_quality)\.py)$
-
       - id: electron-typecheck-and-test
-        name: Electron TypeScript typecheck & Vitest unit suite
+        name: W5CDN Net Logger TypeScript typecheck, UI integrity & Vitest suite
         language: python
         entry: >-
           python -c "import os, shutil, subprocess, sys;
           env = os.environ.copy();
-          env['PATH'] = r'C:\Program Files\nodejs;' + env.get('PATH', '');
+          env['PATH'] = (r'C:\Program Files\nodejs;' if os.name == 'nt' else '') + env.get('PATH', '');
           npm = shutil.which('npm.cmd', path=env['PATH']) or shutil.which('npm', path=env['PATH']);
           sys.exit(0) if not npm or not os.path.isdir('node_modules') else None;
           r1 = subprocess.run([npm, 'run', 'typecheck'], env=env);
@@ -72,7 +49,7 @@ repos:
           r2 = subprocess.run([npm, 'test'], env=env);
           sys.exit(r2.returncode)"
         pass_filenames: false
-        files: ^(src/electron/.*|tests/electron/.*|package\.json|tsconfig\.json|vitest\.config\.ts)$
+        files: ^(src/(electron|static)/.*|tests/electron/.*|scripts/.*\.mjs|package\.json|tsconfig\.json|vitest\.config\.ts)$
 
       - id: nts-traffic-typecheck-and-test
         name: NTS Traffic Manager TypeScript typecheck & Vitest suite
@@ -80,7 +57,7 @@ repos:
         entry: >-
           python -c "import os, shutil, subprocess, sys;
           env = os.environ.copy();
-          env['PATH'] = r'C:\Program Files\nodejs;' + env.get('PATH', '');
+          env['PATH'] = (r'C:\Program Files\nodejs;' if os.name == 'nt' else '') + env.get('PATH', '');
           npm = shutil.which('npm.cmd', path=env['PATH']) or shutil.which('npm', path=env['PATH']);
           sys.exit(0) if not npm or not os.path.isdir('apps/nts-traffic/node_modules') else None;
           r1 = subprocess.run([npm, 'run', 'typecheck'], cwd='apps/nts-traffic', env=env);
@@ -100,10 +77,22 @@ repos:
           ok = bool(re.match(r'^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+', msg)) or msg.startswith(('Merge ', 'Revert '));
           sys.exit('Commit message must follow Conventional Commits (e.g. feat(ui): ... or fix: ...). Got: ' + msg) if not ok else None"
 
-      - id: pytest-pre-push
-        name: Full pytest suite & >=90% coverage gate (pre-push)
-        language: system
+      - id: vitest-pre-push
+        name: Full TypeScript check, version check & Vitest coverage gate (pre-push)
+        language: python
         stages: [pre-push]
-        entry: uv run pytest -q
+        entry: >-
+          python -c "import os, shutil, subprocess, sys;
+          env = os.environ.copy();
+          env['PATH'] = (r'C:\Program Files\nodejs;' if os.name == 'nt' else '') + env.get('PATH', '');
+          node = shutil.which('node.exe', path=env['PATH']) or shutil.which('node', path=env['PATH']);
+          npm = shutil.which('npm.cmd', path=env['PATH']) or shutil.which('npm', path=env['PATH']);
+          sys.exit('Node.js/npm not found on PATH') if not (node and npm) else None;
+          r1 = subprocess.run([node, 'scripts/bump-version.mjs', '--check'], env=env);
+          sys.exit(r1.returncode) if r1.returncode else None;
+          r2 = subprocess.run([npm, 'run', 'typecheck'], env=env);
+          sys.exit(r2.returncode) if r2.returncode else None;
+          r3 = subprocess.run([npm, 'run', 'test:cov'], env=env);
+          sys.exit(r3.returncode)"
         pass_filenames: false
         always_run: true
