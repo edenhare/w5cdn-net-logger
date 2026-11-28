@@ -29,7 +29,7 @@
     "@types/node": "^26.6.6",
     "@types/sql.js": "^1.4.9",
     "@vitest/coverage-v8": "^5.1.1",
-    "electron": "^45.4.1",
+    "electron": "^45.5.0",
     "electron-builder": "^26.18.0",
     "husky": "^9.1.7",
     "typescript": "^7.0.2",
